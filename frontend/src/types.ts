@@ -130,6 +130,7 @@ export interface ScannerResultItem {
 }
 
 export interface ScannerPage {
+  scan_id?: string
   scanner_key: string
   page: number
   page_size: number
@@ -153,6 +154,29 @@ export interface ScannerRunRequest {
   page_size: number
   refresh: boolean
 }
+
+export type ScannerStreamEvent =
+  | { type: 'state'; stage: 'loading_universe' }
+  | {
+      type: 'started'
+      scanner_key: string
+      total_instruments: number
+      page: number
+      page_size: number
+    }
+  | {
+      type: 'progress'
+      symbol: string
+      completed: number
+      total_instruments: number
+      evaluated: number
+      match_count: number
+      skipped_count: number
+      status: 'match' | 'no_match' | 'skipped'
+      item?: ScannerResultItem
+    }
+  | { type: 'complete'; result: ScannerPage }
+  | { type: 'error'; detail: string }
 
 export interface SavedScanner {
   id: number

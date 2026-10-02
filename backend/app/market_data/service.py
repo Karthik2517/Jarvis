@@ -41,13 +41,21 @@ class HistoricalDataService:
         # NIFTY 50 scan can actually fetch several instruments concurrently and
         # does not freeze unrelated FastAPI requests while Neon responds.
         cached = await self._cache_get(instrument_key, from_date, to_date)
-        ranges = self._refresh_ranges(cached, from_date, to_date, refresh=refresh)
+        checked_through = self.cache.checked_through(instrument_key)
+        ranges = self._refresh_ranges(
+            cached,
+            from_date,
+            to_date,
+            refresh=refresh,
+            checked_through=checked_through,
+        )
         for range_start, range_end in ranges:
             fetched = await self.provider.get_daily_candles(
                 instrument_key, range_start, range_end
             )
             self._validate_provider_candles(fetched, range_start, range_end)
             await self._cache_upsert(instrument_key, fetched)
+            await self._cache_mark_checked(instrument_key, range_end)
 
         return await self._cache_get(instrument_key, from_date, to_date)
 
@@ -71,6 +79,14 @@ class HistoricalDataService:
             return
         self.cache.upsert(instrument_key, candles, provider=self.provider_name)
 
+    async def _cache_mark_checked(self, instrument_key: str, checked_through: date) -> None:
+        if isinstance(self.cache, DatabaseCandleCache):
+            await asyncio.to_thread(
+                self.cache.mark_checked_through, instrument_key, checked_through
+            )
+            return
+        self.cache.mark_checked_through(instrument_key, checked_through)
+
     @staticmethod
     def _refresh_ranges(
         cached: list[Candle],
@@ -78,11 +94,12 @@ class HistoricalDataService:
         to_date: date,
         *,
         refresh: bool,
+        checked_through: date | None = None,
     ) -> list[tuple[date, date]]:
+        # `refresh=False` means cache-first, not cache-only: missing coverage
+        # must still be downloaded or a cold deployment could never scan.
         if not cached:
-            return [(from_date, to_date)] if refresh else []
-        if not refresh:
-            return []
+            return [(from_date, to_date)]
 
         first_date = cached[0].timestamp.date()
         last_date = cached[-1].timestamp.date()
@@ -91,10 +108,15 @@ class HistoricalDataService:
         if from_date < first_date:
             ranges.append((from_date, first_date - timedelta(days=1)))
 
-        # Re-fetch the newest cached date so provider corrections overwrite the
-        # cached value, and extend through the requested end date incrementally.
-        right_start = max(from_date, min(last_date, to_date))
-        ranges.append((right_start, to_date))
+        coverage_end = max(last_date, checked_through) if checked_through else last_date
+        if coverage_end < to_date:
+            # A normal scan fetches only dates not already cached. A forced
+            # refresh overlaps the newest candle so provider corrections win.
+            right_start = last_date if refresh else coverage_end + timedelta(days=1)
+            ranges.append((max(from_date, right_start), to_date))
+        elif refresh:
+            # Explicit refresh of a fully covered range rechecks only its edge.
+            ranges.append((max(from_date, min(last_date, to_date)), to_date))
         return ranges
 
     @staticmethod

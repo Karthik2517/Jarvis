@@ -15,6 +15,12 @@ paginate results, save scanner setups, and create in-app alerts with a
 minimum-match threshold. The universe boundary is modular so broader NSE index
 groups can be added later without changing the scanner engine.
 
+Scanner runs stream per-stock progress and matching rows to the browser as
+newline-delimited JSON. Final ranks are emitted after the universe finishes.
+The latest ranked result is stored as a bounded per-user snapshot, so changing
+between 5, 10, or 25 rows per page reads only that page and never reruns the
+market scan.
+
 Scanner alerts are evaluated with **Check now** and remain research-only. The
 scanner does not generate strategy signals or place orders. Scheduled checks and
 email/SMS/push delivery require a separate durable background worker and are not

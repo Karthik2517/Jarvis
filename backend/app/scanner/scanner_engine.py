@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import date
 
@@ -75,8 +76,31 @@ class ScannerEngine:
         *,
         from_date: date,
         to_date: date,
-        refresh: bool = True,
+        refresh: bool = False,
     ) -> ScanResult:
+        outcomes = [
+            outcome
+            async for _, outcome in self.scan_outcomes(
+                instruments,
+                conditions,
+                from_date=from_date,
+                to_date=to_date,
+                refresh=refresh,
+            )
+        ]
+        return self.build_result(instruments, outcomes)
+
+    async def scan_outcomes(
+        self,
+        instruments: list[Instrument],
+        conditions: tuple[Condition, ...] | list[Condition],
+        *,
+        from_date: date,
+        to_date: date,
+        refresh: bool = False,
+    ) -> AsyncIterator[tuple[Instrument, ScanMatch | ScanSkip | None]]:
+        """Yield each stock as soon as its independent evaluation completes."""
+
         if from_date > to_date:
             raise ValueError("from_date must not be after to_date")
         evaluator = ConditionEvaluator(conditions)
@@ -84,17 +108,36 @@ class ScannerEngine:
 
         async def evaluate_instrument(instrument: Instrument):
             async with semaphore:
-                return await self._evaluate_instrument(
+                outcome = await self._evaluate_instrument(
                     instrument,
                     evaluator,
                     from_date=from_date,
                     to_date=to_date,
                     refresh=refresh,
                 )
+                return instrument, outcome
 
-        outcomes = await asyncio.gather(
-            *(evaluate_instrument(instrument) for instrument in instruments)
-        )
+        tasks = [
+            asyncio.create_task(evaluate_instrument(instrument))
+            for instrument in instruments
+        ]
+        try:
+            for completed in asyncio.as_completed(tasks):
+                yield await completed
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+    @staticmethod
+    def build_result(
+        instruments: list[Instrument],
+        outcomes: list[ScanMatch | ScanSkip | None],
+    ) -> ScanResult:
+        """Create deterministic aggregate statistics from streamed outcomes."""
+
         matches = sorted(
             (outcome for outcome in outcomes if isinstance(outcome, ScanMatch)),
             key=lambda match: (match.instrument.trading_symbol, match.instrument.instrument_key),
@@ -119,7 +162,7 @@ class ScannerEngine:
         *,
         from_date: date,
         to_date: date,
-        refresh: bool = True,
+        refresh: bool = False,
         page: int = 1,
         page_size: int = 50,
     ) -> ScanPage:

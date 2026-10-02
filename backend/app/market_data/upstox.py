@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import time
 from datetime import date, datetime
 from typing import Any
 from urllib.parse import quote
@@ -24,6 +25,8 @@ UPSTOX_SUSPENDED_INSTRUMENTS_URL = (
     "https://assets.upstox.com/market-quote/instruments/exchange/"
     "suspended-instrument.json.gz"
 )
+INSTRUMENT_MASTER_CACHE_TTL_SECONDS = 6 * 60 * 60
+_instrument_master_cache: dict[str, tuple[float, Any]] = {}
 
 
 def _json_from_response(response: httpx.Response) -> Any:
@@ -98,12 +101,17 @@ class UpstoxInstrumentMasterProvider(InstrumentMasterProvider):
         self.suspended_url = suspended_url
 
     async def _get_json(self, url: str) -> Any:
+        cached = _instrument_master_cache.get(url)
+        if cached and time.monotonic() - cached[0] < INSTRUMENT_MASTER_CACHE_TTL_SECONDS:
+            return cached[1]
         owns_client = self.client is None
         client = self.client or httpx.AsyncClient(timeout=30.0, follow_redirects=True)
         try:
             response = await client.get(url, headers={"Accept": "application/json"})
             response.raise_for_status()
-            return _json_from_response(response)
+            payload = _json_from_response(response)
+            _instrument_master_cache[url] = (time.monotonic(), payload)
+            return payload
         except httpx.HTTPError as exc:
             raise MarketDataProviderError(f"Could not download Upstox instruments: {exc}") from exc
         finally:

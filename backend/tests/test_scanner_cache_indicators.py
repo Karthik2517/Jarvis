@@ -5,7 +5,11 @@ import pytest
 
 from app.market_data.base import HistoricalDataProvider, MarketDataProviderError
 from app.database import Database
-from app.market_data.cache import DatabaseCandleCache, InMemoryCandleCache
+from app.market_data.cache import (
+    DatabaseCandleCache,
+    InMemoryCandleCache,
+    PrefetchedCandleCache,
+)
 from app.market_data.models import Candle
 from app.market_data.service import HistoricalDataService
 from app.scanner.indicators import (
@@ -70,6 +74,47 @@ def test_history_service_caches_and_incrementally_refreshes_latest_edge():
     assert len(provider.requests) == 2
 
 
+def test_cache_first_mode_fetches_only_missing_ranges():
+    candles = {candle(index, 100 + index).timestamp.date(): candle(index, 100 + index) for index in range(5)}
+    provider = RecordingProvider(candles)
+    cache = InMemoryCandleCache()
+    service = HistoricalDataService(provider, cache, provider_name="TEST")
+    dates = sorted(candles)
+    cache.upsert("NSE_EQ|TEST", [candles[dates[1]], candles[dates[2]]], provider="TEST")
+
+    result = asyncio.run(
+        service.get_daily_candles(
+            "NSE_EQ|TEST", dates[0], dates[4], refresh=False
+        )
+    )
+
+    assert len(result) == 5
+    assert provider.requests == [(dates[0], dates[0]), (dates[3], dates[4])]
+
+
+def test_cache_first_mode_remembers_empty_market_dates():
+    existing = candle(0, 100)
+    provider = RecordingProvider({existing.timestamp.date(): existing})
+    cache = InMemoryCandleCache()
+    cache.upsert("NSE_EQ|TEST", [existing], provider="TEST")
+    service = HistoricalDataService(provider, cache, provider_name="TEST")
+    target = existing.timestamp.date() + timedelta(days=1)
+
+    asyncio.run(
+        service.get_daily_candles(
+            "NSE_EQ|TEST", existing.timestamp.date(), target, refresh=False
+        )
+    )
+    asyncio.run(
+        service.get_daily_candles(
+            "NSE_EQ|TEST", existing.timestamp.date(), target, refresh=False
+        )
+    )
+
+    assert provider.requests == [(target, target)]
+    assert cache.checked_through("NSE_EQ|TEST") == target
+
+
 def test_history_service_replaces_provider_corrections():
     original = candle(0, 100)
     provider = RecordingProvider({original.timestamp.date(): original})
@@ -100,6 +145,37 @@ def test_database_candle_cache_persists_and_upserts_sqlite(tmp_path):
     )
 
     assert [item.close for item in result] == [104, 106]
+
+
+def test_prefetched_cache_bulk_reads_and_flushes_deferred_writes(tmp_path):
+    database = Database(str(tmp_path / "scanner-prefetch.db"))
+    database.url = ""
+    database.initialize()
+    backing = DatabaseCandleCache(database)
+    first = candle(0, 100)
+    second = candle(1, 101)
+    backing.upsert("NSE_EQ|ONE", [first], provider="TEST")
+
+    prefetched = backing.get_many(
+        ["NSE_EQ|ONE", "NSE_EQ|TWO"],
+        first.timestamp.date(),
+        second.timestamp.date(),
+    )
+    scan_cache = PrefetchedCandleCache(backing, prefetched)
+    scan_cache.upsert("NSE_EQ|TWO", [second], provider="TEST")
+    scan_cache.mark_checked_through("NSE_EQ|TWO", second.timestamp.date())
+    assert scan_cache.get(
+        "NSE_EQ|TWO", second.timestamp.date(), second.timestamp.date()
+    ) == [second]
+    assert backing.get(
+        "NSE_EQ|TWO", second.timestamp.date(), second.timestamp.date()
+    ) == []
+
+    scan_cache.flush(provider="TEST")
+    assert backing.get(
+        "NSE_EQ|TWO", second.timestamp.date(), second.timestamp.date()
+    ) == [second]
+    assert backing.checked_through("NSE_EQ|TWO") == second.timestamp.date()
 
 
 def test_history_service_rejects_invalid_provider_candles():

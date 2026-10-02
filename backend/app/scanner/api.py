@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import math
+import time as monotonic_time
+from collections.abc import AsyncIterator
 from dataclasses import asdict
 from datetime import date, datetime, time, timedelta
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from ..config import get_settings, resolve_upstox_market_data_token
 from ..database import db
@@ -17,6 +23,7 @@ from ..market_data import (
     DatabaseCandleCache,
     HistoricalDataService,
     MarketDataProviderError,
+    PrefetchedCandleCache,
     UpstoxHistoricalDataProvider,
     UpstoxInstrumentMasterProvider,
 )
@@ -28,12 +35,15 @@ from ..schemas import (
 )
 from .conditions import Condition, ConditionField, ConditionOperand, ConditionValidationError
 from .results import PaginationError, ScanPage, rank_and_paginate
-from .scanner_engine import ScannerEngine
-from .scanners import ScannerDefinition, default_scanners
+from .scanner_engine import ScanMatch, ScanResult, ScanSkip, ScannerEngine
+from .scanners import RankTransform, ScannerDefinition, default_scanners
+from .scanners.base import rank_value
 from .universe import Nifty50Universe
 
 router = APIRouter(prefix="/api/scanners", tags=["scanners"])
 IST = ZoneInfo("Asia/Kolkata")
+SCAN_CANDLE_MEMORY_TTL_SECONDS = 5 * 60
+_scan_candle_memory: dict[tuple, tuple[float, dict, dict]] = {}
 
 
 def _completed_through(now: datetime | None = None) -> date:
@@ -69,8 +79,8 @@ def _definition_payload(scanner: ScannerDefinition) -> dict:
     }
 
 
-def _page_payload(page: ScanPage, scanner_key: str) -> dict:
-    return {
+def _page_payload(page: ScanPage, scanner_key: str, *, scan_id: str | None = None) -> dict:
+    payload = {
         "scanner_key": scanner_key,
         "page": page.page,
         "page_size": page.page_size,
@@ -95,6 +105,258 @@ def _page_payload(page: ScanPage, scanner_key: str) -> dict:
             }
             for item in page.items
         ],
+    }
+    if scan_id:
+        payload["scan_id"] = scan_id
+    return payload
+
+
+def _match_payload(match: ScanMatch, *, rank: int, rank_value_: float) -> dict:
+    """Serialize a live match using the same shape as a finalized page item."""
+
+    return {
+        "rank": rank,
+        "rank_value": round(rank_value_, 6),
+        "instrument_key": match.instrument.instrument_key,
+        "symbol": match.instrument.trading_symbol,
+        "name": match.instrument.name,
+        "exchange": match.instrument.exchange,
+        "data_as_of": match.data_as_of.isoformat(),
+        "indicators": asdict(match.indicators),
+    }
+
+
+def _custom_conditions(payload: ScannerRunRequest) -> list[Condition]:
+    return [
+        Condition(
+            left=item.left,
+            operator=item.operator,
+            right=(
+                ConditionOperand.indicator(item.right.field, item.right.multiplier)
+                if item.right.field is not None
+                else ConditionOperand.literal(item.right.value)
+            ),
+        )
+        for item in payload.conditions
+    ]
+
+
+def _scan_plan(payload: ScannerRunRequest):
+    if payload.preset_key:
+        scanner = default_scanners().get(payload.preset_key)
+        if not scanner:
+            raise HTTPException(status_code=404, detail="Scanner preset not found")
+        return (
+            scanner.conditions,
+            scanner.key,
+            scanner.rank_field,
+            scanner.rank_direction,
+            scanner.rank_transform,
+        )
+    return (
+        _custom_conditions(payload),
+        "custom",
+        payload.rank_field,
+        payload.rank_direction,
+        RankTransform.RAW,
+    )
+
+
+async def _load_scan_universe(
+    payload: ScannerRunRequest,
+    client: httpx.AsyncClient,
+):
+    """Load and optionally restrict the universe consistently for all scan APIs."""
+
+    universe = await Nifty50Universe().load(UpstoxInstrumentMasterProvider(client))
+    if not universe:
+        raise MarketDataProviderError(
+            "Upstox returned no eligible NIFTY 50 equities; the scanner universe could not be loaded"
+        )
+    if payload.symbols:
+        requested = {symbol.strip().upper() for symbol in payload.symbols if symbol.strip()}
+        universe = [item for item in universe if item.trading_symbol in requested]
+        if not universe:
+            raise HTTPException(
+                status_code=404,
+                detail="None of the requested NSE symbols were found",
+            )
+    return universe
+
+
+async def _build_scan_history(
+    universe,
+    *,
+    market_data_token: str,
+    api_base_url: str,
+    client: httpx.AsyncClient,
+    from_date: date,
+    to_date: date,
+) -> tuple[HistoricalDataService, PrefetchedCandleCache, tuple]:
+    """Bulk-load cached candles once instead of opening a DB connection per stock."""
+
+    persistent_cache = DatabaseCandleCache(db)
+    instrument_keys = tuple(instrument.instrument_key for instrument in universe)
+    cache_key = (
+        db.url or db.path,
+        from_date.isoformat(),
+        to_date.isoformat(),
+        instrument_keys,
+    )
+    memory_entry = _scan_candle_memory.get(cache_key)
+    if (
+        memory_entry
+        and monotonic_time.monotonic() - memory_entry[0]
+        < SCAN_CANDLE_MEMORY_TTL_SECONDS
+    ):
+        cached = {key: list(rows) for key, rows in memory_entry[1].items()}
+        checked_through = dict(memory_entry[2])
+    else:
+        cached, checked_through = await asyncio.to_thread(
+            persistent_cache.prefetch,
+            instrument_keys,
+            from_date,
+            to_date,
+        )
+    scan_cache = PrefetchedCandleCache(persistent_cache, cached, checked_through)
+    history = HistoricalDataService(
+        UpstoxHistoricalDataProvider(
+            market_data_token,
+            api_base_url,
+            client,
+        ),
+        scan_cache,
+        provider_name="UPSTOX",
+    )
+    return history, scan_cache, cache_key
+
+
+def _remember_scan_cache(
+    cache_key: tuple,
+    scan_cache: PrefetchedCandleCache,
+    universe,
+    from_date: date,
+    to_date: date,
+) -> None:
+    candles, checked = scan_cache.snapshot(
+        [instrument.instrument_key for instrument in universe],
+        from_date,
+        to_date,
+    )
+    _scan_candle_memory[cache_key] = (monotonic_time.monotonic(), candles, checked)
+
+
+def _ndjson(payload: dict) -> bytes:
+    return (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _save_scan_snapshot(
+    *,
+    user_id: int,
+    scanner_key: str,
+    result: ScanResult,
+    rank_field: ConditionField,
+    rank_direction,
+    rank_transform: RankTransform,
+) -> str:
+    """Persist one user's latest ranked result for cheap page reads."""
+
+    first_page = rank_and_paginate(
+        result,
+        rank_field=rank_field,
+        rank_direction=rank_direction,
+        rank_transform=rank_transform,
+        page=1,
+        page_size=100,
+    )
+    ranked_items = list(first_page.items)
+    for page_number in range(2, first_page.total_pages + 1):
+        ranked_items.extend(
+            rank_and_paginate(
+                result,
+                rank_field=rank_field,
+                rank_direction=rank_direction,
+                rank_transform=rank_transform,
+                page=page_number,
+                page_size=100,
+            ).items
+        )
+    scan_id = uuid4().hex
+    item_rows = [
+        (
+            scan_id,
+            item.rank,
+            json.dumps(
+                _match_payload(
+                    item.match,
+                    rank=item.rank,
+                    rank_value_=item.rank_value,
+                ),
+                separators=(",", ":"),
+            ),
+        )
+        for item in ranked_items
+    ]
+    with db.transaction() as connection:
+        # One bounded snapshot per user avoids unbounded candle-scan history.
+        connection.execute("DELETE FROM scanner_runs WHERE user_id = ?", (user_id,))
+        connection.execute(
+            """INSERT INTO scanner_runs
+               (id, user_id, scanner_key, total_matches, total_instruments,
+                evaluated, skipped_count, skip_reasons_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                scan_id,
+                user_id,
+                scanner_key,
+                result.matched,
+                result.total_instruments,
+                result.evaluated,
+                result.skipped_count,
+                json.dumps(result.skip_reasons, separators=(",", ":")),
+            ),
+        )
+        if item_rows:
+            connection.executemany(
+                "INSERT INTO scanner_run_results (scan_id, rank, item_json) VALUES (?, ?, ?)",
+                item_rows,
+            )
+    return scan_id
+
+
+def _snapshot_page(scan_id: str, user_id: int, page: int, page_size: int) -> dict:
+    with db.connect() as connection:
+        run = connection.execute(
+            "SELECT * FROM scanner_runs WHERE id = ? AND user_id = ?",
+            (scan_id, user_id),
+        ).fetchone()
+        if not run:
+            raise HTTPException(status_code=404, detail="Scanner result has expired; run it again")
+        total_pages = max(1, math.ceil(int(run["total_matches"]) / page_size))
+        if page > total_pages:
+            raise HTTPException(
+                status_code=400,
+                detail=f"page {page} is out of range; the result has {total_pages} page(s)",
+            )
+        rows = connection.execute(
+            """SELECT item_json FROM scanner_run_results
+               WHERE scan_id = ? ORDER BY rank LIMIT ? OFFSET ?""",
+            (scan_id, page_size, (page - 1) * page_size),
+        ).fetchall()
+    return {
+        "scan_id": scan_id,
+        "scanner_key": run["scanner_key"],
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "total_matches": int(run["total_matches"]),
+        "total_instruments": int(run["total_instruments"]),
+        "evaluated": int(run["evaluated"]),
+        "skipped_count": int(run["skipped_count"]),
+        "skip_reasons": json.loads(run["skip_reasons_json"]),
+        "has_previous": page > 1,
+        "has_next": page < total_pages,
+        "items": [json.loads(row["item_json"]) for row in rows],
     }
 
 
@@ -155,72 +417,169 @@ async def _execute_scan(payload: ScannerRunRequest) -> tuple[ScanPage, str]:
     # requests. Creating a new TLS client per stock made local preset scans take
     # minutes and could exhaust a serverless invocation window.
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        universe = await Nifty50Universe().load(UpstoxInstrumentMasterProvider(client))
-        if not universe:
-            raise MarketDataProviderError(
-                "Upstox returned no eligible NIFTY 50 equities; the scanner universe could not be loaded"
-            )
-        if payload.symbols:
-            requested = {symbol.strip().upper() for symbol in payload.symbols if symbol.strip()}
-            universe = [item for item in universe if item.trading_symbol in requested]
-            if not universe:
-                raise HTTPException(status_code=404, detail="None of the requested NSE symbols were found")
-
-        history = HistoricalDataService(
-            UpstoxHistoricalDataProvider(
-                market_data_token,
-                settings.upstox_api_base_url,
-                client,
-            ),
-            DatabaseCandleCache(db),
-            provider_name="UPSTOX",
-        )
-        engine = ScannerEngine(history)
+        universe = await _load_scan_universe(payload, client)
         to_date = _completed_through()
         from_date = to_date - timedelta(days=430)
+        history, scan_cache, cache_key = await _build_scan_history(
+            universe,
+            market_data_token=market_data_token,
+            api_base_url=settings.upstox_api_base_url,
+            client=client,
+            from_date=from_date,
+            to_date=to_date,
+        )
+        engine = ScannerEngine(history)
 
-        if payload.preset_key:
-            scanner = default_scanners().get(payload.preset_key)
-            if not scanner:
-                raise HTTPException(status_code=404, detail="Scanner preset not found")
-            page = await engine.scan_definition(
+        conditions, scanner_key, rank_field, rank_direction, rank_transform = _scan_plan(payload)
+        try:
+            result = await engine.scan(
                 universe,
-                scanner,
+                conditions,
                 from_date=from_date,
                 to_date=to_date,
                 refresh=payload.refresh,
-                page=payload.page,
-                page_size=payload.page_size,
             )
-            return page, scanner.key
-
-        conditions = [
-            Condition(
-                left=item.left,
-                operator=item.operator,
-                right=(
-                    ConditionOperand.indicator(item.right.field, item.right.multiplier)
-                    if item.right.field is not None
-                    else ConditionOperand.literal(item.right.value)
-                ),
-            )
-            for item in payload.conditions
-        ]
-        result = await engine.scan(
-            universe,
-            conditions,
-            from_date=from_date,
-            to_date=to_date,
-            refresh=payload.refresh,
-        )
+        finally:
+            await asyncio.to_thread(scan_cache.flush, provider="UPSTOX")
+            _remember_scan_cache(cache_key, scan_cache, universe, from_date, to_date)
         page = rank_and_paginate(
             result,
-            rank_field=payload.rank_field,
-            rank_direction=payload.rank_direction,
+            rank_field=rank_field,
+            rank_direction=rank_direction,
+            rank_transform=rank_transform,
             page=payload.page,
             page_size=payload.page_size,
         )
-        return page, "custom"
+        return page, scanner_key
+
+
+async def _stream_scan(
+    payload: ScannerRunRequest,
+    *,
+    user_id: int,
+    market_data_token: str,
+    api_base_url: str,
+) -> AsyncIterator[bytes]:
+    """Stream scan progress and matches, then emit one ranked page."""
+
+    conditions, scanner_key, rank_field, rank_direction, rank_transform = _scan_plan(payload)
+    yield _ndjson({"type": "state", "stage": "loading_universe"})
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            universe = await _load_scan_universe(payload, client)
+
+            yield _ndjson(
+                {
+                    "type": "started",
+                    "scanner_key": scanner_key,
+                    "total_instruments": len(universe),
+                    "page": payload.page,
+                    "page_size": payload.page_size,
+                }
+            )
+
+            to_date = _completed_through()
+            from_date = to_date - timedelta(days=430)
+            history, scan_cache, cache_key = await _build_scan_history(
+                universe,
+                market_data_token=market_data_token,
+                api_base_url=api_base_url,
+                client=client,
+                from_date=from_date,
+                to_date=to_date,
+            )
+            engine = ScannerEngine(history)
+            outcomes: list[ScanMatch | ScanSkip | None] = []
+            match_count = 0
+            skipped_count = 0
+
+            try:
+                async for instrument, outcome in engine.scan_outcomes(
+                    universe,
+                    conditions,
+                    from_date=from_date,
+                    to_date=to_date,
+                    refresh=payload.refresh,
+                ):
+                    outcomes.append(outcome)
+                    event = {
+                        "type": "progress",
+                        "symbol": instrument.trading_symbol,
+                        "completed": len(outcomes),
+                        "total_instruments": len(universe),
+                        "evaluated": len(outcomes) - skipped_count,
+                        "match_count": match_count,
+                        "skipped_count": skipped_count,
+                        "status": "no_match",
+                    }
+                    if isinstance(outcome, ScanSkip):
+                        skipped_count += 1
+                        event.update(
+                            {
+                                "evaluated": len(outcomes) - skipped_count,
+                                "skipped_count": skipped_count,
+                                "status": "skipped",
+                            }
+                        )
+                    elif isinstance(outcome, ScanMatch):
+                        match_count += 1
+                        event.update(
+                            {
+                                "match_count": match_count,
+                                "status": "match",
+                                "item": _match_payload(
+                                    outcome,
+                                    rank=match_count,
+                                    rank_value_=rank_value(
+                                        outcome.indicators,
+                                        field=rank_field,
+                                        transform=rank_transform,
+                                    ),
+                                ),
+                            }
+                        )
+                    yield _ndjson(event)
+            finally:
+                await asyncio.to_thread(scan_cache.flush, provider="UPSTOX")
+                _remember_scan_cache(cache_key, scan_cache, universe, from_date, to_date)
+
+            result = engine.build_result(universe, outcomes)
+            scan_id = await asyncio.to_thread(
+                _save_scan_snapshot,
+                user_id=user_id,
+                scanner_key=scanner_key,
+                result=result,
+                rank_field=rank_field,
+                rank_direction=rank_direction,
+                rank_transform=rank_transform,
+            )
+            page = rank_and_paginate(
+                result,
+                rank_field=rank_field,
+                rank_direction=rank_direction,
+                rank_transform=rank_transform,
+                page=payload.page,
+                page_size=payload.page_size,
+            )
+            yield _ndjson(
+                {
+                    "type": "complete",
+                    "result": _page_payload(page, scanner_key, scan_id=scan_id),
+                }
+            )
+    except asyncio.CancelledError:
+        raise
+    except HTTPException as exc:
+        yield _ndjson({"type": "error", "detail": str(exc.detail)})
+    except (ConditionValidationError, PaginationError, ValueError) as exc:
+        yield _ndjson({"type": "error", "detail": str(exc)})
+    except MarketDataProviderError as exc:
+        yield _ndjson({"type": "error", "detail": str(exc)})
+    except Exception:
+        yield _ndjson(
+            {"type": "error", "detail": "Scanner stream failed unexpectedly"}
+        )
 
 
 @router.get("")
@@ -244,6 +603,52 @@ async def run_scanner(payload: ScannerRunRequest, _=Depends(get_current_user)):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return _page_payload(page, scanner_key)
+
+
+@router.post("/run/stream")
+async def stream_scanner(payload: ScannerRunRequest, user=Depends(get_current_user)):
+    """Return newline-delimited scan events as each NIFTY 50 stock completes."""
+
+    settings = get_settings()
+    market_data_token = resolve_upstox_market_data_token(settings)
+    if not market_data_token:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "UPSTOX_MARKET_DATA_TOKEN or UPSTOX_ACCESS_TOKEN is required "
+                "to run NIFTY 50 scanners"
+            ),
+        )
+    # Validate the selected preset/custom conditions before response headers are
+    # sent; runtime provider errors are delivered as terminal stream events.
+    _scan_plan(payload)
+    return StreamingResponse(
+        _stream_scan(
+            payload,
+            user_id=user["id"],
+            market_data_token=market_data_token,
+            api_base_url=settings.upstox_api_base_url,
+        ),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/runs/{scan_id}")
+async def scanner_result_page(
+    scan_id: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=25),
+    user=Depends(get_current_user),
+):
+    """Read one ranked page without recomputing market indicators."""
+
+    return await asyncio.to_thread(
+        _snapshot_page, scan_id, user["id"], page, page_size
+    )
 
 
 @router.get("/saved")
@@ -408,7 +813,7 @@ async def evaluate_alert(alert_id: int, user=Depends(get_current_user)):
         rank_direction=row["rank_direction"],
         page=1,
         page_size=100,
-        refresh=True,
+        refresh=False,
     )
     try:
         page, scanner_key = await _execute_scan(scan)

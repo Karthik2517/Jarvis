@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
@@ -112,6 +113,81 @@ def test_scanner_run_returns_ranked_paginated_api_response(monkeypatch):
     assert payload["items"][0]["rank"] == 1
     assert payload["items"][0]["symbol"] == "SCANAPITEST"
     assert payload["items"][0]["indicators"]["rsi14"] == 100
+
+
+def test_scanner_stream_emits_incremental_match_and_paginated_completion(monkeypatch):
+    instrument = Instrument(
+        instrument_key="NSE_EQ|STREAMTEST",
+        trading_symbol="STREAMTEST",
+        name="Scanner Stream Test",
+        exchange="NSE",
+        segment="NSE_EQ",
+        instrument_type="EQ",
+        security_type="NORMAL",
+    )
+
+    async def load_universe(_self, _provider):
+        return [instrument]
+
+    async def get_history(_self, _instrument_key, from_date, to_date):
+        del from_date
+        end = datetime.combine(to_date, datetime.min.time(), tzinfo=IST)
+        return [
+            Candle(
+                timestamp=end - timedelta(days=252 - index),
+                open=100 + index,
+                high=101 + index,
+                low=99 + index,
+                close=100 + index,
+                volume=1000 + index,
+            )
+            for index in range(253)
+        ]
+
+    monkeypatch.setattr(scanner_api.Nifty50Universe, "load", load_universe)
+    monkeypatch.setattr(
+        scanner_api.UpstoxHistoricalDataProvider,
+        "get_daily_candles",
+        get_history,
+    )
+    monkeypatch.setattr(
+        scanner_api,
+        "get_settings",
+        lambda: SimpleNamespace(
+            upstox_market_data_token="stream-token",
+            upstox_access_token="execution-token",
+            upstox_api_base_url="https://api.upstox.test",
+        ),
+    )
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        with client.stream(
+            "POST",
+            "/api/scanners/run/stream",
+            headers=headers,
+            json={"preset_key": "rsi", "page": 1, "page_size": 10},
+        ) as response:
+            events = [json.loads(line) for line in response.iter_lines() if line]
+        scan_id = events[-1]["result"]["scan_id"]
+        snapshot_page = client.get(
+            f"/api/scanners/runs/{scan_id}?page=1&page_size=5",
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    assert [event["type"] for event in events] == [
+        "state", "started", "progress", "complete"
+    ]
+    assert events[2]["status"] == "match"
+    assert events[2]["item"]["symbol"] == "STREAMTEST"
+    assert events[3]["result"]["page_size"] == 10
+    assert events[3]["result"]["total_matches"] == 1
+    assert snapshot_page.status_code == 200
+    assert snapshot_page.json()["scan_id"] == scan_id
+    assert snapshot_page.json()["page_size"] == 5
+    assert snapshot_page.json()["items"][0]["symbol"] == "STREAMTEST"
 
 
 def test_scanner_run_rejects_ambiguous_selection():

@@ -152,8 +152,8 @@ class ScannerRunRequest(BaseModel):
     rank_field: ConditionField = ConditionField.PRICE
     rank_direction: RankDirection = RankDirection.DESCENDING
     page: int = Field(default=1, ge=1)
-    page_size: int = Field(default=25, ge=1, le=100)
-    refresh: bool = True
+    page_size: int = Field(default=10, ge=1, le=100)
+    refresh: bool = False
     symbols: list[str] | None = Field(default=None, max_length=100)
 
     @model_validator(mode="after")

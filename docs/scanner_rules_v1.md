@@ -243,6 +243,13 @@ Every scan summary contains:
 Results are ordered by the scanner's primary rank. Equal rank values are resolved
 by trading symbol in ascending alphabetical order so pagination is stable.
 
+Interactive runs emit one progress event whenever an instrument finishes and a
+match event immediately for each qualifying stock. These arrival-order matches
+are provisional: the completion event contains the correctly ranked first page.
+The backend stores only the authenticated user's latest ranked scan snapshot;
+subsequent page reads return 5, 10, or 25 rows without recalculating indicators
+or requesting market history again.
+
 Only matching stocks are returned by default. Diagnostic skip details may be
 requested separately and should not be mixed into the ranked result rows.
 
