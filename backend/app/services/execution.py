@@ -68,12 +68,16 @@ class ExecutionEngine:
              result.filled_quantity, source.value, strategy_name, signal_id, result.status,
              price, result.average_price),
         )
+        # PostgreSQL LASTVAL() changes when the position upsert advances the
+        # positions sequence. Preserve the order id before applying the fill so
+        # the API always returns the order created by this request.
+        order_id = cursor.lastrowid
         if result.filled_quantity > 0 and result.average_price is not None:
             self._apply_fill(
                 connection, user_id, execution_mode, symbol, instrument_key, side,
                 result.filled_quantity, result.average_price, position
             )
-        return connection.execute("SELECT * FROM orders WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        return connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
 
     @staticmethod
     def _rejected(
