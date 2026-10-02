@@ -2,12 +2,15 @@ import os
 from pathlib import Path
 
 os.environ["DATABASE_PATH"] = str(Path(__file__).parent / "test_jarvis.db")
+os.environ["DATABASE_URL"] = ""
 os.environ["APP_SECRET"] = "test-secret"
+os.environ["DEMO_STRATEGY_KEY"] = "demo-strategy-key"
 os.environ["UPSTOX_ACCESS_TOKEN"] = ""
 
 from fastapi.testclient import TestClient
 
 from app.database import db
+from app.instruments import register_instruments
 from app.main import app
 
 
@@ -83,6 +86,39 @@ def test_complete_buy_sell_and_signal_flow():
 
 def test_risk_rejection_is_audited():
     test_db = Path(os.environ["DATABASE_PATH"])
+    test_db.unlink(missing_ok=True)
+
+
+def test_paper_order_resolves_a_stock_not_in_the_default_list(monkeypatch):
+    """Orders must not rely on a prior serverless search request's memory."""
+    test_db = Path(os.environ["DATABASE_PATH"])
+    test_db.unlink(missing_ok=True)
+
+    async def resolve_hindalco(*_args, **_kwargs):
+        instrument = {
+            "symbol": "HINDALCO",
+            "name": "Hindalco Industries",
+            "exchange": "NSE",
+            "price": 941.85,
+            "instrument_key": "NSE_EQ|INE038A01020",
+            "source": "UPSTOX",
+            "previous_close": 940.90,
+            "change_percent": 0.10,
+        }
+        register_instruments([instrument])
+        return [instrument]
+
+    monkeypatch.setattr("app.main.search_equities", resolve_hindalco)
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"email": "jarvis@example.com", "password": "jarvis1234"})
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        order = client.post(
+            "/api/orders", headers=headers,
+            json={"symbol": "HINDALCO", "side": "BUY", "quantity": 1},
+        )
+        assert order.status_code == 201
+        assert order.json()["status"] == "FILLED"
+        assert order.json()["symbol"] == "HINDALCO"
     test_db.unlink(missing_ok=True)
     with TestClient(app) as client:
         token = client.post("/api/auth/login", json={"email": "jarvis@example.com", "password": "jarvis1234"}).json()["access_token"]

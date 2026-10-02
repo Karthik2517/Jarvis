@@ -148,7 +148,10 @@ async def place_order(payload: OrderRequest, user=Depends(get_current_user)):
     if broker_name in {"UPSTOX", "UPSTOX_LIVE"} and not payload.confirm_live:
         raise HTTPException(status_code=409, detail="Explicit confirmation is required for a live order")
     instrument = find_instrument(payload.symbol)
-    if broker_name != "PAPER" and (not instrument or not instrument.get("instrument_key")):
+    # Vercel may route the search request and the order request to different
+    # function instances. Resolve an unknown symbol again in this request so a
+    # paper order never depends on an in-memory search cache from a prior call.
+    if not instrument or (broker_name != "PAPER" and not instrument.get("instrument_key")):
         await search_equities(payload.symbol, limit=10)
     with db.transaction() as connection:
         order = ExecutionEngine(selected_broker(connection, user["id"])).execute(
@@ -168,7 +171,7 @@ async def receive_signal(payload: SignalRequest, user=Depends(get_strategy_user)
     if broker_name in {"UPSTOX", "UPSTOX_LIVE"} and not get_settings().allow_live_strategies:
         raise HTTPException(status_code=403, detail="Automated live strategy execution is disabled")
     instrument = find_instrument(payload.symbol)
-    if broker_name != "PAPER" and (not instrument or not instrument.get("instrument_key")):
+    if not instrument or (broker_name != "PAPER" and not instrument.get("instrument_key")):
         await search_equities(payload.symbol, limit=10)
     with db.transaction() as connection:
         if payload.signal_id:
