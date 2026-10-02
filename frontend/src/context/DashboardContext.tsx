@@ -10,12 +10,10 @@ interface DashboardState {
   broker: BrokerStatus
   strategyApiKey: string
   lastUpdated: Date | null
-  refreshing: boolean
   resettingPaper: boolean
   notice: string
   error: string
   load: (silent?: boolean) => Promise<void>
-  refreshNow: () => Promise<void>
   switchBroker: (name: string) => Promise<void>
   createStrategy: (name: string, description: string) => Promise<void>
   toggleStrategy: (strategy: Strategy) => Promise<void>
@@ -88,7 +86,6 @@ export function DashboardProvider({
   const [lastUpdated, setLastUpdated] = useState<Date | null>(
     () => cachedDashboard ? new Date(cachedDashboard.cached_at) : null,
   )
-  const [refreshing, setRefreshing] = useState(false)
   const [resettingPaper, setResettingPaper] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
@@ -118,17 +115,6 @@ export function DashboardProvider({
       else if (!silent) setError(err instanceof Error ? err.message : 'Could not load dashboard')
     }
   }, [email, onLogout])
-
-  async function refreshNow() {
-    if (refreshing) return
-    setRefreshing(true)
-    try {
-      // Keep the visual feedback visible even when the API responds immediately.
-      await Promise.all([load(), new Promise(resolve => window.setTimeout(resolve, 500))])
-    } finally {
-      setRefreshing(false)
-    }
-  }
 
   useEffect(() => {
     // Background polling should never show a stale error.
@@ -219,9 +205,9 @@ export function DashboardProvider({
   return (
     <DashboardContext.Provider value={{
       instruments, positions, orders, strategies, broker,
-      strategyApiKey, lastUpdated, refreshing, resettingPaper,
+      strategyApiKey, lastUpdated, resettingPaper,
       notice, error,
-      load, refreshNow, switchBroker, createStrategy, toggleStrategy,
+      load, switchBroker, createStrategy, toggleStrategy,
       rotateStrategyKey, resetPaperPortfolio, addInstrument,
       setNotice, setError,
     }}>

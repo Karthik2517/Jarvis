@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet } from 'react-router-dom'
-import { Activity, BarChart3, LogOut, RefreshCw, ScanSearch, WalletCards, Zap } from 'lucide-react'
+import { Activity, BarChart3, LogOut, ScanSearch, WalletCards, Zap } from 'lucide-react'
 import { useDashboard } from '../context/DashboardContext'
 import { formatIstTime } from '../utils'
 import { api } from '../api'
@@ -17,7 +17,7 @@ export default function Shell({
   email: string
   onLogout: () => void
 }) {
-  const { broker, lastUpdated, refreshing, refreshNow } = useDashboard()
+  const { broker, lastUpdated } = useDashboard()
   const [loggingOut, setLoggingOut] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [userName, setUserName] = useState(
@@ -60,16 +60,6 @@ export default function Shell({
             <span/> {broker.market_data_source === 'UPSTOX' ? 'UPSTOX FEED' : 'PAPER FEED'} ·{' '}
             {lastUpdated ? `UPDATED ${formatIstTime(lastUpdated)}` : 'LOADING'}
           </div>
-          <button
-            className={`icon-button refresh-button${refreshing ? ' refreshing' : ''}`}
-            onClick={refreshNow}
-            disabled={refreshing}
-            title={refreshing ? 'Refreshing data…' : 'Refresh now'}
-            aria-label={refreshing ? 'Refreshing data' : 'Refresh dashboard data'}
-          >
-            <RefreshCw size={17}/>
-          </button>
-
           {/* Clickable user chip → opens profile panel */}
           <button
             className="user-chip"

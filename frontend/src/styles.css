@@ -44,11 +44,6 @@ header { height:68px; display:flex; align-items:center; justify-content:space-be
 .market-status { color:#8590a2; font:500 10px DM Mono; letter-spacing:.1em; padding-right:14px; border-right:1px solid var(--line); }
 .market-status span,.broker-control i { display:inline-block; width:7px; height:7px; background:var(--green); border-radius:50%; margin-right:7px; box-shadow:0 0 8px var(--green); }
 .icon-button { width:34px; height:34px; display:grid; place-items:center; color:#828da0; border:1px solid var(--line); border-radius:8px; background:#101620; }
-.refresh-button { transition:border-color .2s,color .2s,background .2s; }
-.refresh-button:hover:not(:disabled) { color:var(--green); border-color:var(--green); }
-.refresh-button.refreshing { color:var(--green); border-color:var(--green); background:rgba(38,208,124,.08); cursor:wait; }
-.refresh-button.refreshing svg { animation:spin .8s linear infinite; }
-.refresh-button:disabled { opacity:1; }
 .logout-button { transition:border-color .2s,color .2s,background .2s; }
 .logout-button:hover:not(:disabled) { color:#ff8b8b; border-color:#ff6b6b; }
 .logout-button.logging-out { color:#ff8b8b; border-color:#ff6b6b; background:rgba(255,107,107,.1); cursor:wait; }
