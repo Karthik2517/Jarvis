@@ -26,6 +26,7 @@ from .schemas import (
     StrategyUpdate,
 )
 from .security import create_token, hash_secret, verify_secret
+from .scanner.api import router as scanner_router
 from .services.execution import ExecutionEngine
 from .services.market_data import refresh_instrument_prices, search_equities
 from .services.reconciliation import reconcile_orders
@@ -71,6 +72,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(scanner_router)
 
 
 @app.get("/api/health")

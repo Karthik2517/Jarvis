@@ -2,9 +2,10 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
   Activity, ArrowDownRight, ArrowUpRight, BarChart3, Check, CircleDollarSign,
   Clipboard, Code2, Eye, EyeOff, KeyRound, Layers3, LogOut, Pause, PieChart, Play, Plus,
-  Radio, RefreshCw, Search, ShieldCheck, TrendingUp, WalletCards, Zap,
+  Radio, RefreshCw, ScanSearch, Search, ShieldCheck, TrendingUp, WalletCards, Zap,
 } from 'lucide-react'
 import { api, ApiError } from './api'
+import ScannerView from './ScannerView'
 import type { BrokerStatus, Instrument, Order, Position, Side, Strategy } from './types'
 
 const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 })
@@ -274,7 +275,7 @@ httpx.post(
 }
 
 function Dashboard({ email, onLogout }: { email: string; onLogout: () => void }) {
-  const [activeView, setActiveView] = useState<'overview' | 'portfolio' | 'strategies'>('overview')
+  const [activeView, setActiveView] = useState<'overview' | 'portfolio' | 'strategies' | 'scanner'>('overview')
   const [instruments, setInstruments] = useState<Instrument[]>([])
   const [positions, setPositions] = useState<Position[]>([])
   const [orders, setOrders] = useState<Order[]>([])
@@ -480,10 +481,10 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
       </div>
     </header>
 
-    <nav><button className={activeView === 'overview' ? 'active' : ''} onClick={() => setActiveView('overview')}><BarChart3 size={17}/> Overview</button><button className={activeView === 'portfolio' ? 'active' : ''} onClick={() => setActiveView('portfolio')}><WalletCards size={17}/> Portfolio</button><button className={activeView === 'strategies' ? 'active' : ''} onClick={() => setActiveView('strategies')}><Zap size={17}/> Strategies</button></nav>
+    <nav><button className={activeView === 'overview' ? 'active' : ''} onClick={() => setActiveView('overview')}><BarChart3 size={17}/> Overview</button><button className={activeView === 'portfolio' ? 'active' : ''} onClick={() => setActiveView('portfolio')}><WalletCards size={17}/> Portfolio</button><button className={activeView === 'scanner' ? 'active' : ''} onClick={() => setActiveView('scanner')}><ScanSearch size={17}/> Scanner</button><button className={activeView === 'strategies' ? 'active' : ''} onClick={() => setActiveView('strategies')}><Zap size={17}/> Strategies</button></nav>
 
     <main className="dashboard">
-      <div className="page-title"><div><span className="kicker">{activeView === 'overview' ? 'TRADING DESK' : activeView === 'portfolio' ? 'PORTFOLIO' : 'AUTOMATION'}</span><h1>{activeView === 'overview' ? `Good day, ${email.split('@')[0]}` : activeView === 'portfolio' ? 'Portfolio overview' : 'Strategy control center'}</h1><p>{activeView === 'overview' ? 'One execution path. Manual or automated.' : activeView === 'portfolio' ? 'Track exposure, allocation, and performance in one place.' : 'Connect Python strategies and control their execution access.'}</p></div>
+      <div className="page-title"><div><span className="kicker">{activeView === 'overview' ? 'TRADING DESK' : activeView === 'portfolio' ? 'PORTFOLIO' : activeView === 'scanner' ? 'MARKET DISCOVERY' : 'AUTOMATION'}</span><h1>{activeView === 'overview' ? `Good day, ${email.split('@')[0]}` : activeView === 'portfolio' ? 'Portfolio overview' : activeView === 'scanner' ? 'Equity scanner' : 'Strategy control center'}</h1><p>{activeView === 'overview' ? 'One execution path. Manual or automated.' : activeView === 'portfolio' ? 'Track exposure, allocation, and performance in one place.' : activeView === 'scanner' ? 'Find NSE equities that match technical conditions.' : 'Connect Python strategies and control their execution access.'}</p></div>
         <div className="broker-control"><div><small>BROKER CONNECTION</small><strong><i/>{broker.broker} · {broker.status.replace('_', ' ')}</strong></div>
           <select disabled={busy} value={broker.broker === 'UPSTOX' ? 'UPSTOX_LIVE' : broker.broker} onChange={e => switchBroker(e.target.value)}><option value="PAPER">Paper</option><option value="UPSTOX_SANDBOX">Upstox Sandbox</option><option value="UPSTOX_LIVE">Upstox Live</option></select>
         </div>
@@ -544,7 +545,7 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
       </> : activeView === 'portfolio' ? <PortfolioView positions={positions} orders={orders} instruments={instruments} onResetPaper={resetPaperPortfolio} resettingPaper={resettingPaper} canResetPaper={broker.broker === 'PAPER'} onTrade={symbol => {
         setSelected(instruments.find(item => item.symbol === symbol) || null)
         setActiveView('overview')
-      }}/> : <StrategiesView strategies={strategies} orders={orders} apiKey={strategyApiKey} onCreate={createStrategy} onToggle={toggleStrategy} onRotateKey={rotateStrategyKey}/>} 
+      }}/> : activeView === 'scanner' ? <ScannerView/> : <StrategiesView strategies={strategies} orders={orders} apiKey={strategyApiKey} onCreate={createStrategy} onToggle={toggleStrategy} onRotateKey={rotateStrategyKey}/>}
     </main>
   </div>
 }

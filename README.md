@@ -6,6 +6,18 @@ A deliberately small equity trading platform with one complete vertical slice:
 
 Both the React order ticket and external Python strategies enter through the backend and share exactly the same risk and execution code.
 
+## Equity scanner
+
+The Scanner tab provides five NSE daily-candle scans: 52-week high breakout,
+52-week low, volume breakout, price above SMA 20/50/200, and RSI momentum. Users
+can also combine validated custom conditions, rank and paginate results, save
+scanner setups, and create in-app alerts with a minimum-match threshold.
+
+Scanner alerts are evaluated with **Check now** and remain research-only. The
+scanner does not generate strategy signals or place orders. Scheduled checks and
+email/SMS/push delivery require a separate durable background worker and are not
+part of this Vercel-first version.
+
 ## Architecture
 
 ```text

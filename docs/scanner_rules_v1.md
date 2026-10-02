@@ -266,12 +266,35 @@ Task 1 is complete when:
 - the custom-condition grammar is constrained and safe;
 - scanner evaluation remains independent of strategies and order execution.
 
-## 11. Deferred from v1
+## 11. Saved scanners and alerts
+
+Authenticated users can save either a preset or a validated custom scanner.
+Saved scanners belong only to the user who created them. Deleting a saved
+scanner also deletes its alert definitions and prior alert events.
+
+V1 alerts are in-app, user-triggered checks. Selecting **Check now** evaluates
+the saved scanner against completed daily candles and records an event when the
+configured minimum number of matches is reached. An alert never creates a
+strategy signal or places an order.
+
+Automatic schedules, email, SMS, and push delivery are intentionally deferred.
+Those require a durable background worker rather than a request-bound Vercel
+function.
+
+## 12. Operational boundary
+
+- Scanner CRUD and alert routes require the normal user bearer token.
+- Scanner definitions are stored as validated JSON, never executable code.
+- Upstox credentials remain backend-only.
+- The UI and API expose scanner results as research output, not trade advice.
+- The scanner package does not import the risk, execution, strategy, or broker
+  order-placement services.
+
+## 13. Deferred from v1
 
 - intraday scanners;
 - fundamental-data filters;
 - OR groups and nested custom-condition logic;
-- alerts;
-- saved scanner definitions;
+- scheduled alert evaluation and external alert delivery;
 - automatic signal generation;
 - automatic order execution.

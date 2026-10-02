@@ -1,7 +1,10 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+
+from .scanner.conditions import ComparisonOperator, ConditionField
+from .scanner.scanners import RankDirection
 
 
 class Side(str, Enum):
@@ -101,3 +104,65 @@ class StrategyResponse(BaseModel):
 class StrategyKeyResponse(BaseModel):
     strategy_api_key: str
     message: str
+
+
+class ScannerOperandRequest(BaseModel):
+    value: float | None = None
+    field: ConditionField | None = None
+    multiplier: float = 1.0
+
+    @model_validator(mode="after")
+    def validate_operand(self):
+        if (self.value is None) == (self.field is None):
+            raise ValueError("Provide exactly one of value or field")
+        if self.field is None and self.multiplier != 1.0:
+            raise ValueError("A literal operand cannot have a multiplier")
+        return self
+
+
+class ScannerConditionRequest(BaseModel):
+    left: ConditionField
+    operator: ComparisonOperator
+    right: ScannerOperandRequest
+
+
+class ScannerRunRequest(BaseModel):
+    preset_key: str | None = Field(default=None, pattern=r"^[a-z0-9_]+$")
+    conditions: list[ScannerConditionRequest] = Field(default_factory=list, max_length=10)
+    rank_field: ConditionField = ConditionField.PRICE
+    rank_direction: RankDirection = RankDirection.DESCENDING
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=25, ge=1, le=100)
+    refresh: bool = True
+    symbols: list[str] | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_scanner_selection(self):
+        if bool(self.preset_key) == bool(self.conditions):
+            raise ValueError("Provide either preset_key or custom conditions")
+        return self
+
+
+class SavedScannerCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=80, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9 _-]*$")
+    preset_key: str | None = Field(default=None, pattern=r"^[a-z0-9_]+$")
+    conditions: list[ScannerConditionRequest] = Field(default_factory=list, max_length=10)
+    rank_field: ConditionField = ConditionField.PRICE
+    rank_direction: RankDirection = RankDirection.DESCENDING
+
+    @model_validator(mode="after")
+    def validate_definition(self):
+        if bool(self.preset_key) == bool(self.conditions):
+            raise ValueError("Provide either preset_key or custom conditions")
+        return self
+
+
+class ScannerAlertCreate(BaseModel):
+    saved_scanner_id: int = Field(gt=0)
+    name: str = Field(min_length=2, max_length=80, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9 _-]*$")
+    minimum_matches: int = Field(default=1, ge=1, le=10000)
+
+
+class ScannerAlertUpdate(BaseModel):
+    enabled: bool | None = None
+    minimum_matches: int | None = Field(default=None, ge=1, le=10000)

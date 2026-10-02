@@ -1,4 +1,8 @@
-import type { BrokerStatus, Instrument, Order, Position, Side, Strategy } from './types'
+import type {
+  BrokerStatus, Instrument, Order, Position, ScannerCatalog, ScannerPage,
+  SavedScanner, ScannerAlert, ScannerAlertEvaluation, ScannerAlertEvent,
+  ScannerCondition, ScannerField, ScannerRunRequest, RankDirection, Side, Strategy,
+} from './types'
 
 // Support the original deployment variable name as well as the canonical one.
 // Both values should include the backend's `/api` prefix.
@@ -61,5 +65,38 @@ export const api = {
   }),
   placeOrder: (symbol: string, side: Side, quantity: number, confirmLive = false) => request<Order>('/orders', {
     method: 'POST', body: JSON.stringify({ symbol, side, quantity, confirm_live: confirmLive }),
+  }),
+  scanners: () => request<ScannerCatalog>('/scanners'),
+  runScanner: (payload: ScannerRunRequest) => request<ScannerPage>('/scanners/run', {
+    method: 'POST', body: JSON.stringify(payload),
+  }),
+  savedScanners: () => request<SavedScanner[]>('/scanners/saved'),
+  saveScanner: (payload: {
+    name: string; preset_key?: string; conditions?: ScannerCondition[];
+    rank_field: ScannerField; rank_direction: RankDirection;
+  }) => request<SavedScanner>('/scanners/saved', {
+    method: 'POST', body: JSON.stringify(payload),
+  }),
+  deleteSavedScanner: (id: number) => request<{ message: string }>(`/scanners/saved/${id}`, {
+    method: 'DELETE',
+  }),
+  scannerAlerts: () => request<ScannerAlert[]>('/scanners/alerts'),
+  createScannerAlert: (savedScannerId: number, name: string, minimumMatches: number) =>
+    request<ScannerAlert>('/scanners/alerts', {
+      method: 'POST', body: JSON.stringify({ saved_scanner_id: savedScannerId, name, minimum_matches: minimumMatches }),
+    }),
+  updateScannerAlert: (id: number, payload: { enabled?: boolean; minimum_matches?: number }) =>
+    request<ScannerAlert>(`/scanners/alerts/${id}`, {
+      method: 'PATCH', body: JSON.stringify(payload),
+    }),
+  deleteScannerAlert: (id: number) => request<{ message: string }>(`/scanners/alerts/${id}`, {
+    method: 'DELETE',
+  }),
+  evaluateScannerAlert: (id: number) => request<ScannerAlertEvaluation>(`/scanners/alerts/${id}/evaluate`, {
+    method: 'POST',
+  }),
+  scannerAlertEvents: () => request<ScannerAlertEvent[]>('/scanners/alert-events'),
+  markScannerAlertRead: (id: number) => request<{ message: string }>(`/scanners/alert-events/${id}/read`, {
+    method: 'PATCH',
   }),
 }
