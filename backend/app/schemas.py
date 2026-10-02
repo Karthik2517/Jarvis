@@ -34,6 +34,26 @@ class AuthResponse(BaseModel):
     strategy_api_key: str | None = None
 
 
+class UserResponse(BaseModel):
+    email: str
+    name: str
+    created_at: datetime
+
+
+class ProfileUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=80)
+    current_password: str | None = None
+    new_password: str | None = Field(default=None, min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_payload(self):
+        if self.new_password and not self.current_password:
+            raise ValueError("current_password is required to set a new password")
+        if self.name is None and not self.new_password:
+            raise ValueError("Provide at least one of name or new_password to update")
+        return self
+
+
 class OrderRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=30)
     side: Side

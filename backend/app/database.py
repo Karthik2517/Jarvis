@@ -139,7 +139,8 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     strategy_api_key_hash TEXT NOT NULL UNIQUE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    name TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS broker_connections (
@@ -343,6 +344,7 @@ class Database:
                     """CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_user_signal
                        ON orders(user_id, execution_mode, signal_id) WHERE signal_id IS NOT NULL"""
                 )
+                connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT ''")
             return
         with self.connect() as connection:
             connection.executescript(SCHEMA)
@@ -354,6 +356,7 @@ class Database:
                 "signal_id": "TEXT",
             })
             self._add_missing_columns(connection, "positions", {"instrument_key": "TEXT"})
+            self._add_missing_columns(connection, "users", {"name": "TEXT NOT NULL DEFAULT ''"})
             self._migrate_positions_scope(connection)
             connection.execute("DROP INDEX IF EXISTS idx_orders_user_signal")
             connection.execute(

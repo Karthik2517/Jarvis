@@ -18,12 +18,14 @@ from .schemas import (
     OrderResponse,
     OrderSource,
     PositionResponse,
+    ProfileUpdate,
     RegisterRequest,
     SignalRequest,
     StrategyCreate,
     StrategyKeyResponse,
     StrategyResponse,
     StrategyUpdate,
+    UserResponse,
 )
 from .security import create_token, hash_secret, verify_secret
 from .scanner.api import router as scanner_router
@@ -120,6 +122,34 @@ def rotate_strategy_key(user=Depends(get_current_user)):
         strategy_api_key=api_key,
         message="Save this key now. It will not be shown again.",
     )
+
+
+@app.get("/api/auth/me", response_model=UserResponse)
+def get_me(user=Depends(get_current_user)):
+    return UserResponse(email=user["email"], name=user["name"], created_at=user["created_at"])
+
+
+@app.patch("/api/auth/me", response_model=UserResponse)
+def update_me(payload: ProfileUpdate, user=Depends(get_current_user)):
+    updates: dict = {}
+    # Name update — no password required
+    if payload.name is not None:
+        updates["name"] = payload.name.strip()
+    # Password change — requires current_password verification
+    if payload.new_password:
+        if not payload.current_password or not verify_secret(payload.current_password, user["password_hash"]):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+        updates["password_hash"] = hash_secret(payload.new_password)
+    if not updates:
+        return UserResponse(email=user["email"], name=user["name"], created_at=user["created_at"])
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [user["id"]]
+    with db.transaction() as conn:
+        conn.execute(f"UPDATE users SET {set_clause} WHERE id = ?", values)
+    with db.connect() as conn:
+        updated = conn.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+    return UserResponse(email=updated["email"], name=updated["name"], created_at=updated["created_at"])
+
 
 
 @app.get("/api/instruments")

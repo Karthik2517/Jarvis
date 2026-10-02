@@ -99,4 +99,10 @@ export const api = {
   markScannerAlertRead: (id: number) => request<{ message: string }>(`/scanners/alert-events/${id}/read`, {
     method: 'PATCH',
   }),
+  getProfile: () =>
+    request<{ email: string; name: string; created_at: string }>('/auth/me'),
+  updateProfile: (payload: { name?: string; current_password?: string; new_password?: string }) =>
+    request<{ email: string; name: string; created_at: string }>('/auth/me', {
+      method: 'PATCH', body: JSON.stringify(payload),
+    }),
 }
