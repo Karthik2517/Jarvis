@@ -288,7 +288,7 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
   const [resettingPaper, setResettingPaper] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     try {
       // Reconcile broker orders first so positions reflect any newly confirmed fills.
       const allOrders = await api.orders()
@@ -299,7 +299,7 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
       setLastUpdated(new Date())
     } catch (err) {
       if (err instanceof ApiError && err.message.toLowerCase().includes('token')) onLogout()
-      else setError(err instanceof Error ? err.message : 'Could not load dashboard')
+      else if (!silent) setError(err instanceof Error ? err.message : 'Could not load dashboard')
     }
   }, [onLogout])
 
@@ -372,7 +372,9 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
       const order = await api.placeOrder(selected.symbol, side, parsedQuantity, isLiveOrder)
       if (order.status === 'REJECTED') setError(order.rejection_reason || 'Order rejected')
       else setNotice(`${side} ${parsedQuantity} ${selected.symbol} filled at ${money.format(order.average_price || 0)}`)
-      await load()
+      // The order has already succeeded. A delayed dashboard refresh must not
+      // replace the success message with a misleading trade error.
+      await load(true)
     } catch (err) { setError(err instanceof Error ? err.message : 'Order failed') }
     finally { setBusy(false) }
   }
