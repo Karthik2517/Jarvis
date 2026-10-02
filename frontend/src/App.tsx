@@ -522,6 +522,7 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
           <div className="card-heading"><div><span className="kicker">PORTFOLIO</span><h2>Open positions</h2></div><span className="count">{openPositions.length}</span></div>
           {openPositions.length === 0 ? <EmptyState text="Your filled orders will appear here."/> : <div className="table-wrap"><table><thead><tr><th>Instrument</th><th>Qty</th><th>Avg.</th><th>LTP</th><th>P&L</th></tr></thead><tbody>
             {visiblePositions.map(position => <tr key={position.symbol}><td><strong>{position.symbol}</strong><small>NSE · EQ</small></td><td>{position.quantity}</td><td>{money.format(position.average_price)}</td><td>{money.format(position.last_price)}</td><td className={position.total_pnl >= 0 ? 'gain' : 'loss'}>{position.total_pnl >= 0 ? '+' : ''}{money.format(position.total_pnl)}</td></tr>)}
+            {Array.from({ length: pageSize - visiblePositions.length }, (_, index) => <tr className="placeholder-row" aria-hidden="true" key={`position-placeholder-${index}`}><td><strong>&nbsp;</strong><small>&nbsp;</small></td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>)}
           </tbody></table><Pagination page={currentPositionsPage} totalPages={positionsTotalPages} onChange={setPositionsPage}/></div>}
         </article>
       </section>
