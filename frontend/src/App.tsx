@@ -321,8 +321,10 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
   }
 
   useEffect(() => {
-    load()
-    const refreshTimer = window.setInterval(load, 10_000)
+    // Background polling should never show a trade error after a successful
+    // order. The manual refresh control still reports a real refresh failure.
+    load(true)
+    const refreshTimer = window.setInterval(() => { void load(true) }, 10_000)
     return () => window.clearInterval(refreshTimer)
   }, [load])
 
@@ -383,19 +385,19 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
     try {
       const response = await api.connectBroker(name)
       setBroker(response); setNotice(response.message); setError('')
-      await load()
+      await load(true)
     } catch (err) { setError(err instanceof Error ? err.message : 'Broker update failed') }
   }
 
   async function createStrategy(name: string, description: string) {
-    try { await api.createStrategy(name, description); setNotice(`Strategy ${name} registered`); setError(''); await load() }
+    try { await api.createStrategy(name, description); setNotice(`Strategy ${name} registered`); setError(''); await load(true) }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not create strategy'); throw err }
   }
 
   async function toggleStrategy(strategy: Strategy) {
     try {
       const nextStatus = strategy.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE'
-      await api.updateStrategy(strategy.id, nextStatus); setNotice(`${strategy.name} ${nextStatus.toLowerCase()}`); setError(''); await load()
+      await api.updateStrategy(strategy.id, nextStatus); setNotice(`${strategy.name} ${nextStatus.toLowerCase()}`); setError(''); await load(true)
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not update strategy') }
   }
 
@@ -413,7 +415,7 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
     try {
       const response = await api.resetPaperPortfolio()
       setNotice(`${response.message} (${response.orders_removed} orders, ${response.positions_removed} positions removed)`)
-      await load()
+      await load(true)
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not reset paper portfolio') }
     finally { setResettingPaper(false) }
   }
