@@ -6,6 +6,10 @@ import { formatIstTime } from '../utils'
 import { api } from '../api'
 import ProfilePanel from './ProfilePanel'
 
+function profileNameKey(email: string) {
+  return `jarvis_profile_name:${email.toLowerCase()}`
+}
+
 export default function Shell({
   email,
   onLogout,
@@ -16,17 +20,30 @@ export default function Shell({
   const { broker, lastUpdated, refreshing, refreshNow } = useDashboard()
   const [loggingOut, setLoggingOut] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
-  const [userName, setUserName] = useState('')
+  const [userName, setUserName] = useState(
+    () => localStorage.getItem(profileNameKey(email)) || '',
+  )
   const [joinedAt, setJoinedAt] = useState('')
 
   useEffect(() => {
+    const cachedName = localStorage.getItem(profileNameKey(email))?.trim()
     api.getProfile()
       .then(p => {
-        setUserName(p.name)
+        const persistedName = p.name.trim()
+        if (!cachedName && persistedName) {
+          localStorage.setItem(profileNameKey(email), persistedName)
+          setUserName(persistedName)
+        }
         setJoinedAt(p.created_at)
       })
       .catch(console.error)
-  }, [])
+  }, [email])
+
+  function handleNameChange(name: string) {
+    const persistedName = name.trim()
+    localStorage.setItem(profileNameKey(email), persistedName)
+    setUserName(persistedName)
+  }
 
   function signOut() {
     if (loggingOut) return
@@ -61,7 +78,7 @@ export default function Shell({
             aria-label="Open account settings"
           >
             <span>{userName ? userName.slice(0, 1).toUpperCase() : email.slice(0, 1).toUpperCase()}</span>
-            <div>{userName || 'User'}</div>
+            <div>{userName || email.split('@')[0]}</div>
           </button>
 
           <button
@@ -101,7 +118,7 @@ export default function Shell({
         userName={userName}
         joinedAt={joinedAt}
         onClose={() => setProfileOpen(false)}
-        onNameChange={setUserName}
+        onNameChange={handleNameChange}
       />
     </div>
   )

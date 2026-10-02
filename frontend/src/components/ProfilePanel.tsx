@@ -52,8 +52,8 @@ export default function ProfilePanel({ isOpen, email, userName, joinedAt, onClos
     e.preventDefault()
     setNameBusy(true); setNameError(''); setNameNotice('')
     try {
-      await api.updateProfile({ name })
-      onNameChange(name)
+      const profile = await api.updateProfile({ name })
+      onNameChange(profile.name)
       setNameNotice('Display name saved')
     } catch (err) {
       setNameError(err instanceof ApiError ? err.message : 'Could not save name')
