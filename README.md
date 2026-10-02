@@ -51,6 +51,18 @@ Deploy the `backend` directory as a separate Vercel project. The included `pypro
 
 Before deploying the backend, move the database from local SQLite to a hosted PostgreSQL provider such as Neon or Supabase. Vercel function filesystems are not persistent, so `jarvis.db` must remain local development storage only. Configure `APP_SECRET`, `DATABASE_URL` (after the PostgreSQL migration), `FRONTEND_ORIGIN`, and the Upstox settings as backend environment variables. Never commit `.env` or broker tokens.
 
+### Migrate the local database to Neon
+
+Set `DATABASE_URL` in `backend/.env` to the pooled Neon connection string, then run:
+
+```bash
+cd backend
+pip install -r requirements.txt
+python -m scripts.migrate_sqlite_to_postgres --source ./jarvis.db
+```
+
+The migration creates the PostgreSQL schema and copies users, broker connections, orders, positions, and strategies. When `DATABASE_URL` is empty, the API continues using `DATABASE_PATH` and SQLite for local development.
+
 ### Enable live Upstox instrument search
 
 Generate an access token from your Upstox developer app and add it to `backend/.env`:

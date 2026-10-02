@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "JARVIS API"
     database_path: str = "./jarvis.db"
+    database_url: str = ""
     app_secret: str = "local-development-secret-change-me"
     frontend_origin: str = "http://localhost:5173"
     paper_starting_cash: float = 1_000_000
