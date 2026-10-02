@@ -391,6 +391,7 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
         if (isCurrentOrderContext) {
           setError('')
           setNotice(`${side} ${parsedQuantity} ${selected.symbol} filled at ${money.format(order.average_price || 0)}`)
+          setQuantity('1')
         }
       }
       // The order has already succeeded. A delayed dashboard refresh must not
