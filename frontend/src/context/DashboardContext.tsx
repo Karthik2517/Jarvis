@@ -1,6 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../api'
-import type { BrokerStatus, Instrument, Order, Position, Strategy } from '../types'
+import type { BrokerStatus, DashboardSnapshot, Instrument, Order, Position, Strategy } from '../types'
 
 interface DashboardState {
   instruments: Instrument[]
@@ -27,6 +27,36 @@ interface DashboardState {
 }
 
 const DashboardContext = createContext<DashboardState | null>(null)
+const DASHBOARD_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000
+
+type CachedDashboard = DashboardSnapshot & { cached_at: string }
+
+function cacheKey(email: string) {
+  return `jarvis_dashboard_snapshot:${email.toLowerCase()}`
+}
+
+function readDashboardCache(email: string): CachedDashboard | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(email))
+    if (!raw) return null
+    const cached = JSON.parse(raw) as CachedDashboard
+    if (
+      !cached.cached_at || Date.now() - new Date(cached.cached_at).getTime() > DASHBOARD_CACHE_MAX_AGE_MS
+      || !Array.isArray(cached.positions) || !Array.isArray(cached.orders)
+    ) return null
+    return cached
+  } catch {
+    return null
+  }
+}
+
+function writeDashboardCache(email: string, snapshot: DashboardSnapshot) {
+  try {
+    localStorage.setItem(cacheKey(email), JSON.stringify({ ...snapshot, cached_at: new Date().toISOString() }))
+  } catch {
+    // Storage may be unavailable or full; dashboard loading must still work.
+  }
+}
 
 export function useDashboard() {
   const ctx = useContext(DashboardContext)
@@ -36,20 +66,28 @@ export function useDashboard() {
 
 export function DashboardProvider({
   onLogout,
+  email,
   children,
 }: {
   onLogout: () => void
+  email: string
   children: React.ReactNode
 }) {
-  const [instruments, setInstruments] = useState<Instrument[]>([])
-  const [positions, setPositions] = useState<Position[]>([])
-  const [orders, setOrders] = useState<Order[]>([])
-  const [strategies, setStrategies] = useState<Strategy[]>([])
+  const [cachedDashboard] = useState(() => readDashboardCache(email))
+  const cachedPositionsVisible = useRef(Boolean(cachedDashboard))
+  const [instruments, setInstruments] = useState<Instrument[]>(() => cachedDashboard?.instruments || [])
+  const [positions, setPositions] = useState<Position[]>(() => cachedDashboard?.positions || [])
+  const [orders, setOrders] = useState<Order[]>(() => cachedDashboard?.orders || [])
+  const [strategies, setStrategies] = useState<Strategy[]>(() => cachedDashboard?.strategies || [])
   const [strategyApiKey, setStrategyApiKey] = useState(
     () => localStorage.getItem('jarvis_new_api_key') || '',
   )
-  const [broker, setBroker] = useState<BrokerStatus>({ broker: 'PAPER', status: 'CONNECTED' })
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [broker, setBroker] = useState<BrokerStatus>(
+    () => cachedDashboard?.broker || { broker: 'PAPER', status: 'CONNECTED' },
+  )
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(
+    () => cachedDashboard ? new Date(cachedDashboard.cached_at) : null,
+  )
   const [refreshing, setRefreshing] = useState(false)
   const [resettingPaper, setResettingPaper] = useState(false)
   const [notice, setNotice] = useState('')
@@ -57,22 +95,29 @@ export function DashboardProvider({
 
   const load = useCallback(async (silent = false) => {
     try {
-      // Reconcile broker orders first so positions reflect any newly confirmed fills.
-      const allOrders = await api.orders()
-      const [allInstruments, allPositions, brokerStatus, allStrategies] = await Promise.all([
-        api.instruments(), api.positions(true), api.broker(), api.strategies(),
-      ])
-      setInstruments(allInstruments)
-      setPositions(allPositions)
-      setOrders(allOrders)
-      setBroker(brokerStatus)
-      setStrategies(allStrategies)
+      // Request the fast DB snapshot and live LTP update in parallel. The UI
+      // does not wait for the remote Upstox quote request before rendering.
+      const freshPositions = api.positions(true).catch(() => null)
+      const snapshot = await api.dashboard()
+      setInstruments(snapshot.instruments)
+      if (!cachedPositionsVisible.current) setPositions(snapshot.positions)
+      setOrders(snapshot.orders)
+      setBroker(snapshot.broker)
+      setStrategies(snapshot.strategies)
       setLastUpdated(new Date())
+      writeDashboardCache(email, snapshot)
+      cachedPositionsVisible.current = false
+
+      void freshPositions.then(latestPositions => {
+        if (!latestPositions) return
+        setPositions(latestPositions)
+        writeDashboardCache(email, { ...snapshot, positions: latestPositions, prices_pending: false })
+      })
     } catch (err) {
       if (err instanceof ApiError && err.message.toLowerCase().includes('token')) onLogout()
       else if (!silent) setError(err instanceof Error ? err.message : 'Could not load dashboard')
     }
-  }, [onLogout])
+  }, [email, onLogout])
 
   async function refreshNow() {
     if (refreshing) return

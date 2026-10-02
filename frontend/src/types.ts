@@ -57,6 +57,15 @@ export interface Strategy {
   created_at: string
 }
 
+export interface DashboardSnapshot {
+  instruments: Instrument[]
+  positions: Position[]
+  orders: Order[]
+  strategies: Strategy[]
+  broker: BrokerStatus
+  prices_pending: boolean
+}
+
 export type ScannerField =
   | 'price' | 'volume' | 'avg_volume_20' | 'volume_ratio'
   | 'sma20' | 'sma50' | 'sma200' | 'rsi14'

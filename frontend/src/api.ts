@@ -1,5 +1,5 @@
 import type {
-  BrokerStatus, Instrument, Order, Position, ScannerCatalog, ScannerPage,
+  BrokerStatus, DashboardSnapshot, Instrument, Order, Position, ScannerCatalog, ScannerPage,
   SavedScanner, ScannerAlert, ScannerAlertEvaluation, ScannerAlertEvent,
   ScannerCondition, ScannerField, ScannerRunRequest, RankDirection, Side, Strategy,
 } from './types'
@@ -46,6 +46,7 @@ export const api = {
   instruments: (query = '') => request<Instrument[]>(`/instruments?q=${encodeURIComponent(query)}`),
   orders: () => request<Order[]>('/orders'),
   positions: (includeClosed = false) => request<Position[]>(`/positions?include_closed=${includeClosed}`),
+  dashboard: () => request<DashboardSnapshot>('/dashboard'),
   resetPaperPortfolio: () => request<{ message: string; orders_removed: number; positions_removed: number }>('/portfolio/paper/reset', {
     method: 'POST',
   }),

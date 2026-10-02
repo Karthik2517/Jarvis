@@ -17,6 +17,25 @@ from app.main import app
 def test_complete_buy_sell_and_signal_flow():
     test_db = Path(os.environ["DATABASE_PATH"])
     test_db.unlink(missing_ok=True)
+
+
+def test_dashboard_snapshot_returns_portfolio_without_waiting_for_live_prices():
+    test_db = Path(os.environ["DATABASE_PATH"])
+    test_db.unlink(missing_ok=True)
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"email": "jarvis@example.com", "password": "jarvis1234"})
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        client.post("/api/orders", headers=headers, json={"symbol": "RELIANCE", "side": "BUY", "quantity": 2})
+
+        response = client.get("/api/dashboard", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["broker"]["broker"] == "PAPER"
+    assert payload["orders"][0]["symbol"] == "RELIANCE"
+    assert payload["positions"][0]["symbol"] == "RELIANCE"
+    assert payload["prices_pending"] is False
+    test_db.unlink(missing_ok=True)
     with TestClient(app) as client:
         login = client.post("/api/auth/login", json={"email": "jarvis@example.com", "password": "jarvis1234"})
         assert login.status_code == 200

@@ -51,7 +51,7 @@ export default function App() {
         element={
           isAuthenticated
             ? (
-              <DashboardProvider onLogout={logout}>
+              <DashboardProvider onLogout={logout} email={email}>
                 <Shell email={email} onLogout={logout} />
               </DashboardProvider>
             )

@@ -295,14 +295,19 @@ def list_orders(user=Depends(get_current_user)):
     return [dict(row) for row in rows]
 
 
-@app.get("/api/positions", response_model=list[PositionResponse])
-async def list_positions(include_closed: bool = False, user=Depends(get_current_user)):
-    execution_mode = selected_broker_name(user["id"])
+async def position_payloads(
+    user_id: int,
+    execution_mode: str,
+    *,
+    include_closed: bool,
+    refresh_prices: bool,
+) -> list[dict]:
+    """Build positions from the database, optionally waiting for a fresh LTP."""
     with db.connect() as connection:
         rows = connection.execute(
             """SELECT * FROM positions WHERE user_id = ? AND execution_mode = ?
                AND (? OR quantity != 0) ORDER BY symbol""",
-            (user["id"], execution_mode, include_closed),
+            (user_id, execution_mode, include_closed),
         ).fetchall()
     register_instruments([
         {
@@ -316,7 +321,7 @@ async def list_positions(include_closed: bool = False, user=Depends(get_current_
         for row in rows if row["instrument_key"]
     ])
     # Market data can be live while execution remains safely in paper mode.
-    if get_settings().upstox_access_token:
+    if refresh_prices and get_settings().upstox_access_token:
         await refresh_instrument_prices([row["symbol"] for row in rows if row["quantity"] != 0])
     positions = []
     for row in rows:
@@ -335,6 +340,56 @@ async def list_positions(include_closed: bool = False, user=Depends(get_current_
             "total_pnl": round(row["realized_pnl"] + unrealized, 2),
         })
     return positions
+
+
+@app.get("/api/positions", response_model=list[PositionResponse])
+async def list_positions(include_closed: bool = False, user=Depends(get_current_user)):
+    return await position_payloads(
+        user["id"],
+        selected_broker_name(user["id"]),
+        include_closed=include_closed,
+        refresh_prices=True,
+    )
+
+
+@app.get("/api/dashboard")
+async def dashboard_snapshot(user=Depends(get_current_user)):
+    """Return the dashboard state without making the first render wait for LTPs.
+
+    The browser requests a fresh positions feed separately. This makes an initial
+    dashboard render depend only on the database while preserving live prices
+    shortly afterward.
+    """
+    reconcile_orders(user["id"])
+    with db.connect() as connection:
+        broker_row = connection.execute(
+            "SELECT broker, status, updated_at FROM broker_connections WHERE user_id = ?",
+            (user["id"],),
+        ).fetchone()
+        broker = dict(broker_row) if broker_row else {"broker": "PAPER", "status": "CONNECTED"}
+        execution_mode = broker["broker"]
+        orders = connection.execute(
+            """SELECT * FROM orders WHERE user_id = ? AND execution_mode = ?
+               ORDER BY id DESC LIMIT 100""",
+            (user["id"], execution_mode),
+        ).fetchall()
+        strategies = connection.execute(
+            "SELECT * FROM strategies WHERE user_id = ? ORDER BY updated_at DESC, id DESC",
+            (user["id"],),
+        ).fetchall()
+
+    broker["market_data_source"] = "UPSTOX" if get_settings().upstox_access_token else "PAPER"
+    positions = await position_payloads(
+        user["id"], execution_mode, include_closed=True, refresh_prices=False,
+    )
+    return {
+        "instruments": await search_equities("", limit=10),
+        "positions": positions,
+        "orders": [dict(row) for row in orders],
+        "strategies": [dict(row) for row in strategies],
+        "broker": broker,
+        "prices_pending": bool(get_settings().upstox_access_token and positions),
+    }
 
 
 @app.post("/api/portfolio/paper/reset")
