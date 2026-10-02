@@ -95,6 +95,7 @@ function PortfolioView({
   onTrade,
   onResetPaper,
   resettingPaper,
+  canResetPaper,
 }: {
   positions: Position[]
   orders: Order[]
@@ -102,6 +103,7 @@ function PortfolioView({
   onTrade: (symbol: string) => void
   onResetPaper: () => void
   resettingPaper: boolean
+  canResetPaper: boolean
 }) {
   const openPositions = positions.filter(item => item.quantity !== 0)
   const marketValue = openPositions.reduce((sum, item) => sum + Math.abs(item.market_value), 0)
@@ -121,7 +123,7 @@ function PortfolioView({
 
     <section className="portfolio-grid">
       <article className="card portfolio-summary">
-        <div className="card-heading"><div><span className="kicker">DISTRIBUTION</span><h2>Portfolio allocation</h2></div><div className="portfolio-actions"><PieChart size={19}/><button className="reset-paper-button" onClick={onResetPaper} disabled={resettingPaper}>{resettingPaper ? 'Resetting…' : 'Reset paper'}</button></div></div>
+        <div className="card-heading"><div><span className="kicker">DISTRIBUTION</span><h2>Portfolio allocation</h2></div><div className="portfolio-actions"><PieChart size={19}/>{canResetPaper && <button className="reset-paper-button" onClick={onResetPaper} disabled={resettingPaper}>{resettingPaper ? 'Resetting…' : 'Reset paper'}</button>}</div></div>
         {openPositions.length === 0 ? <EmptyState text="Place your first order to build an allocation."/> : <div className="allocation-list">
           {openPositions.map((position, index) => {
             const allocation = marketValue ? Math.abs(position.market_value) / marketValue * 100 : 0
@@ -474,10 +476,9 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
       <section className="card orders-card">
         <div className="card-heading"><div><span className="kicker">EXECUTION LOG</span><h2>Recent orders</h2></div><small>Latest 100 orders</small></div>
         {orders.length === 0 ? <EmptyState text="No orders submitted yet."/> : <div className="table-wrap"><table><thead><tr><th>Time</th><th>Instrument</th><th>Side</th><th>Filled / Qty</th><th>Source</th><th>Fill price</th><th>Status</th></tr></thead><tbody>
-          {orders.map(order => <tr key={order.id}><td>{formatIstTime(apiDate(order.created_at))}</td><td><strong>{order.symbol}</strong><small>{order.broker_order_id || order.rejection_reason}</small></td><td><span className={`side ${order.side.toLowerCase()}`}>{order.side}</span></td><td>{order.filled_quantity} / {order.quantity}</td><td>{order.source === 'STRATEGY' ? order.strategy_name : 'Manual'}</td><td>{order.average_price ? money.format(order.average_price) : '—'}</td><td><span className={`status ${order.status.toLowerCase()}`}>{order.status}</span></td></tr>)}
         </tbody></table></div>}
       </section>
-      </> : activeView === 'portfolio' ? <PortfolioView positions={positions} orders={orders} instruments={instruments} onResetPaper={resetPaperPortfolio} resettingPaper={resettingPaper} onTrade={symbol => {
+      </> : activeView === 'portfolio' ? <PortfolioView positions={positions} orders={orders} instruments={instruments} onResetPaper={resetPaperPortfolio} resettingPaper={resettingPaper} canResetPaper={broker.broker === 'PAPER'} onTrade={symbol => {
         setSelected(instruments.find(item => item.symbol === symbol) || null)
         setActiveView('overview')
       }}/> : <StrategiesView strategies={strategies} orders={orders} apiKey={strategyApiKey} onCreate={createStrategy} onToggle={toggleStrategy} onRotateKey={rotateStrategyKey}/>} 
