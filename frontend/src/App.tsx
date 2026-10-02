@@ -279,6 +279,8 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchError, setSearchError] = useState('')
   const searchSequence = useRef(0)
+  const brokerModeRef = useRef('PAPER')
+  const selectedSymbolRef = useRef<string | null>(null)
   const [quantity, setQuantity] = useState('1')
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
@@ -358,6 +360,15 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
   const parsedQuantity = Number(quantity)
   const validQuantity = Number.isInteger(parsedQuantity) && parsedQuantity > 0
   const currentEnvironment = environmentLabel(broker.broker)
+  brokerModeRef.current = broker.broker
+  selectedSymbolRef.current = selected?.symbol || null
+
+  useEffect(() => {
+    // An order error belongs to the symbol and execution environment that
+    // produced it. Do not carry it into a new stock or broker selection.
+    setError('')
+    setNotice('')
+  }, [broker.broker, selected?.symbol])
 
   async function trade(side: Side) {
     if (!selected) return
@@ -366,18 +377,30 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
       return
     }
     const isLiveOrder = broker.broker === 'UPSTOX_LIVE' || broker.broker === 'UPSTOX'
+    const orderBroker = broker.broker
+    const orderSymbol = selected.symbol
     if (isLiveOrder && !window.confirm(
       `LIVE ORDER\n\n${side} ${parsedQuantity} ${selected.symbol} at market.\n\nThis can use real funds. Continue?`
     )) return
     setBusy(true); setError(''); setNotice('')
     try {
       const order = await api.placeOrder(selected.symbol, side, parsedQuantity, isLiveOrder)
-      if (order.status === 'REJECTED') setError(order.rejection_reason || 'Order rejected')
-      else setNotice(`${side} ${parsedQuantity} ${selected.symbol} filled at ${money.format(order.average_price || 0)}`)
+      const isCurrentOrderContext = brokerModeRef.current === orderBroker && selectedSymbolRef.current === orderSymbol
+      if (order.status === 'REJECTED' && isCurrentOrderContext) setError(order.rejection_reason || 'Order rejected')
+      else {
+        if (isCurrentOrderContext) {
+          setError('')
+          setNotice(`${side} ${parsedQuantity} ${selected.symbol} filled at ${money.format(order.average_price || 0)}`)
+        }
+      }
       // The order has already succeeded. A delayed dashboard refresh must not
       // replace the success message with a misleading trade error.
       await load(true)
-    } catch (err) { setError(err instanceof Error ? err.message : 'Order failed') }
+    } catch (err) {
+      if (brokerModeRef.current === orderBroker && selectedSymbolRef.current === orderSymbol) {
+        setError(err instanceof Error ? err.message : 'Order failed')
+      }
+    }
     finally { setBusy(false) }
   }
 
@@ -436,7 +459,7 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
     <main className="dashboard">
       <div className="page-title"><div><span className="kicker">{activeView === 'overview' ? 'TRADING DESK' : activeView === 'portfolio' ? 'PORTFOLIO' : 'AUTOMATION'}</span><h1>{activeView === 'overview' ? `Good day, ${email.split('@')[0]}` : activeView === 'portfolio' ? 'Portfolio overview' : 'Strategy control center'}</h1><p>{activeView === 'overview' ? 'One execution path. Manual or automated.' : activeView === 'portfolio' ? 'Track exposure, allocation, and performance in one place.' : 'Connect Python strategies and control their execution access.'}</p></div>
         <div className="broker-control"><div><small>BROKER CONNECTION</small><strong><i/>{broker.broker} · {broker.status.replace('_', ' ')}</strong></div>
-          <select value={broker.broker === 'UPSTOX' ? 'UPSTOX_LIVE' : broker.broker} onChange={e => switchBroker(e.target.value)}><option value="PAPER">Paper</option><option value="UPSTOX_SANDBOX">Upstox Sandbox</option><option value="UPSTOX_LIVE">Upstox Live</option></select>
+          <select disabled={busy} value={broker.broker === 'UPSTOX' ? 'UPSTOX_LIVE' : broker.broker} onChange={e => switchBroker(e.target.value)}><option value="PAPER">Paper</option><option value="UPSTOX_SANDBOX">Upstox Sandbox</option><option value="UPSTOX_LIVE">Upstox Live</option></select>
         </div>
       </div>
 
