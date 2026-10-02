@@ -1,7 +1,8 @@
 import type {
   BrokerStatus, DashboardSnapshot, Instrument, Order, Position, ScannerCatalog, ScannerPage,
   SavedScanner, ScannerAlert, ScannerAlertEvaluation, ScannerAlertEvent,
-  ScannerCondition, ScannerField, ScannerRunRequest, RankDirection, Side, Strategy,
+  ScannerCondition, ScannerField, ScannerRunRequest, ScannerStreamEvent,
+  RankDirection, Side, Strategy,
 } from './types'
 
 // Support the original deployment variable name as well as the canonical one.
@@ -32,6 +33,75 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new ApiError(payload.detail || 'Request failed')
   }
   return response.json()
+}
+
+async function streamScanner(
+  payload: ScannerRunRequest,
+  onEvent: (event: ScannerStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const token = localStorage.getItem('jarvis_token')
+  const response = await fetch(`${API_URL}/scanners/run/stream`, {
+    method: 'POST',
+    signal,
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/x-ndjson',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) {
+    const errorPayload = await response.json().catch(() => ({ detail: 'Scanner stream failed' }))
+    if (response.status === 401 && token) {
+      localStorage.removeItem('jarvis_token')
+      localStorage.removeItem('jarvis_email')
+      window.dispatchEvent(new Event('jarvis:unauthorized'))
+    }
+    throw new ApiError(errorPayload.detail || 'Scanner stream failed')
+  }
+  if (!response.body) throw new ApiError('Streaming is not supported by this browser')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let completed = false
+
+  // Process one NDJSON line immediately without awaiting.
+  // All setState calls inside onEvent from the same synchronous loop
+  // iteration are automatically batched by React 18 into one render.
+  const processLine = (line: string) => {
+    if (!line.trim()) return
+    let event: ScannerStreamEvent
+    try {
+      event = JSON.parse(line) as ScannerStreamEvent
+    } catch {
+      throw new ApiError('The scanner returned an invalid stream event')
+    }
+    if (event.type === 'error') throw new ApiError(event.detail)
+    if (event.type === 'complete') completed = true
+    onEvent(event)
+  }
+
+  try {
+    while (true) {
+      // reader.read() naturally yields to the JS event loop, giving
+      // React a render boundary between every TCP chunk.
+      const { value, done } = await reader.read()
+      buffer += decoder.decode(value, { stream: !done })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      // Process all complete lines in this chunk synchronously so React
+      // batches their state updates into a single render per chunk.
+      for (const line of lines) processLine(line)
+      if (done) break
+    }
+    // Flush any remaining partial line after EOF.
+    if (buffer.trim()) processLine(buffer)
+  } finally {
+    reader.releaseLock()
+  }
+  if (!completed) throw new ApiError('The scanner stream ended before completion')
 }
 
 export const api = {
@@ -71,6 +141,9 @@ export const api = {
   runScanner: (payload: ScannerRunRequest) => request<ScannerPage>('/scanners/run', {
     method: 'POST', body: JSON.stringify(payload),
   }),
+  streamScanner,
+  scannerResultPage: (scanId: string, page: number, pageSize: number) =>
+    request<ScannerPage>(`/scanners/runs/${encodeURIComponent(scanId)}?page=${page}&page_size=${pageSize}`),
   savedScanners: () => request<SavedScanner[]>('/scanners/saved'),
   saveScanner: (payload: {
     name: string; preset_key?: string; conditions?: ScannerCondition[];
