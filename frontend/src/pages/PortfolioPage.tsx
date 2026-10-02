@@ -1,8 +1,10 @@
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CircleDollarSign, Layers3, PieChart, TrendingUp, WalletCards } from 'lucide-react'
 import { useDashboard } from '../context/DashboardContext'
 import Metric from '../components/Metric'
 import EmptyState from '../components/EmptyState'
+import Pagination from '../components/Pagination'
 import PageHeader from '../components/PageHeader'
 import { money } from '../utils'
 
@@ -12,8 +14,15 @@ export default function PortfolioPage() {
     resettingPaper, resetPaperPortfolio,
   } = useDashboard()
   const navigate = useNavigate()
+  const [positionPage, setPositionPage] = useState(1)
 
   const openPositions = positions.filter(item => item.quantity !== 0)
+  const positionPageSize = 5
+  const positionsTotalPages = Math.max(1, Math.ceil(openPositions.length / positionPageSize))
+  const paginatedPositions = openPositions.slice(
+    (positionPage - 1) * positionPageSize,
+    positionPage * positionPageSize,
+  )
   const marketValue = openPositions.reduce((sum, item) => sum + Math.abs(item.market_value), 0)
   const investedValue = openPositions.reduce(
     (sum, item) => sum + Math.abs(item.average_price * item.quantity), 0,
@@ -24,6 +33,10 @@ export default function PortfolioPage() {
   const returnPercent = investedValue ? (totalPnl / investedValue) * 100 : 0
   const filledOrders = orders.filter(order => order.status === 'FILLED')
   const canResetPaper = broker.broker === 'PAPER'
+
+  useEffect(() => {
+    if (positionPage > positionsTotalPages) setPositionPage(positionsTotalPages)
+  }, [positionPage, positionsTotalPages])
 
   function handleTrade(symbol: string) {
     // Navigate to overview with the symbol pre-selected via location state
@@ -149,8 +162,9 @@ export default function PortfolioPage() {
         {openPositions.length === 0
           ? <EmptyState text="Your open holdings and P&L will appear here."/>
           : (
-            <div className="table-wrap">
-              <table>
+            <>
+              <div className="table-wrap">
+                <table>
                 <thead>
                   <tr>
                     <th>Instrument</th><th>Direction</th><th>Quantity</th>
@@ -160,7 +174,7 @@ export default function PortfolioPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {openPositions.map(position => {
+                  {paginatedPositions.map(position => {
                     const instrument = instruments.find(item => item.symbol === position.symbol)
                     const cost = Math.abs(position.average_price * position.quantity)
                     const positionReturn = cost ? position.total_pnl / cost * 100 : 0
@@ -203,8 +217,10 @@ export default function PortfolioPage() {
                     )
                   })}
                 </tbody>
-              </table>
-            </div>
+                </table>
+              </div>
+              <Pagination page={positionPage} totalPages={positionsTotalPages} onChange={setPositionPage}/>
+            </>
           )
         }
       </section>
