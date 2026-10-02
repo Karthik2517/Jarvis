@@ -452,10 +452,10 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
         <article className="card order-ticket">
           <div className="card-heading"><div><span className="kicker">ORDER ENTRY</span><h2>Place market order</h2></div><span className="live-pill">PAPER</span></div>
           <div className="instrument-search">
-            <label className="search-box"><Search size={18}/><input autoComplete="off" placeholder="Search NSE equities — e.g. RELIANCE" value={query} onFocus={() => query.trim().length >= 2 && setSearchOpen(true)} onChange={e => setQuery(e.target.value)}/>{searching && <RefreshCw className="search-spinner" size={15}/>}</label>
+            <label className="search-box"><Search size={18}/><input autoComplete="off" placeholder="Search NSE equities — e.g. RELIANCE" value={query} onFocus={() => query.trim().length >= 2 && setSearchOpen(true)} onChange={e => { setQuery(e.target.value); setError(''); setNotice('') }}/>{searching && <RefreshCw className="search-spinner" size={15}/>}</label>
             {searchOpen && query.trim().length >= 2 && <div className="instrument-list">
               {searchError ? <div className="search-message error-text">{searchError}</div> : !searching && searchResults.length === 0 ? <div className="search-message">No NSE equities found</div> : searchResults.map(item => <button className={selected?.instrument_key === item.instrument_key && selected?.symbol === item.symbol ? 'selected' : ''} key={item.instrument_key || item.symbol} onClick={() => {
-                setSelected(item); setQuery(''); setSearchOpen(false)
+                setSelected(item); setQuery(''); setSearchOpen(false); setError(''); setNotice('')
                 setInstruments(current => current.some(existing => existing.symbol === item.symbol) ? current : [...current, item])
               }}>
                 <div><strong>{item.symbol}</strong><span>{item.name}</span></div><div><b>{item.price > 0 ? money.format(item.price) : 'Quote unavailable'}</b><small>{item.exchange} · {currentEnvironment}</small></div>
@@ -480,6 +480,15 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
       <section className="card orders-card">
         <div className="card-heading"><div><span className="kicker">EXECUTION LOG</span><h2>Recent orders</h2></div><small>Latest 100 orders</small></div>
         {orders.length === 0 ? <EmptyState text="No orders submitted yet."/> : <div className="table-wrap"><table><thead><tr><th>Time</th><th>Instrument</th><th>Side</th><th>Filled / Qty</th><th>Source</th><th>Fill price</th><th>Status</th></tr></thead><tbody>
+          {orders.map(order => <tr key={order.id}>
+            <td>{formatIstTime(apiDate(order.created_at))}</td>
+            <td><strong>{order.symbol}</strong>{(order.broker_order_id || order.rejection_reason) && <small>{order.broker_order_id || order.rejection_reason}</small>}</td>
+            <td><span className={`side ${order.side.toLowerCase()}`}>{order.side}</span></td>
+            <td>{order.filled_quantity} / {order.quantity}</td>
+            <td>{order.source === 'STRATEGY' ? order.strategy_name || 'Strategy' : 'Manual'}</td>
+            <td>{order.average_price !== null ? money.format(order.average_price) : '—'}</td>
+            <td><span className={`status ${order.status.toLowerCase()}`}>{order.status}</span></td>
+          </tr>)}
         </tbody></table></div>}
       </section>
       </> : activeView === 'portfolio' ? <PortfolioView positions={positions} orders={orders} instruments={instruments} onResetPaper={resetPaperPortfolio} resettingPaper={resettingPaper} canResetPaper={broker.broker === 'PAPER'} onTrade={symbol => {
