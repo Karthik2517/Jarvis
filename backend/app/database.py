@@ -71,6 +71,24 @@ CREATE TABLE IF NOT EXISTS strategies (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, name)
 );
+
+CREATE TABLE IF NOT EXISTS market_candles (
+    instrument_key TEXT NOT NULL,
+    candle_date TEXT NOT NULL,
+    candle_timestamp TEXT NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    volume INTEGER NOT NULL,
+    open_interest INTEGER NOT NULL DEFAULT 0,
+    provider TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(instrument_key, candle_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_candles_lookup
+ON market_candles(instrument_key, candle_date);
 """
 
 
@@ -140,6 +158,24 @@ CREATE TABLE IF NOT EXISTS strategies (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, name)
 );
+
+CREATE TABLE IF NOT EXISTS market_candles (
+    instrument_key TEXT NOT NULL,
+    candle_date TEXT NOT NULL,
+    candle_timestamp TEXT NOT NULL,
+    open DOUBLE PRECISION NOT NULL,
+    high DOUBLE PRECISION NOT NULL,
+    low DOUBLE PRECISION NOT NULL,
+    close DOUBLE PRECISION NOT NULL,
+    volume BIGINT NOT NULL,
+    open_interest BIGINT NOT NULL DEFAULT 0,
+    provider TEXT NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(instrument_key, candle_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_candles_lookup
+ON market_candles(instrument_key, candle_date);
 """
 
 
