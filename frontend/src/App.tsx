@@ -88,6 +88,15 @@ function Metric({ label, value, detail, icon: Icon, tone = '' }: { label: string
   </article>
 }
 
+function Pagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange: (page: number) => void }) {
+  if (totalPages <= 1) return null
+  return <div className="pagination">
+    <button type="button" disabled={page === 1} onClick={() => onChange(page - 1)}>Previous</button>
+    <span>Page {page} of {totalPages}</span>
+    <button type="button" disabled={page === totalPages} onClick={() => onChange(page + 1)}>Next</button>
+  </div>
+}
+
 function PortfolioView({
   positions,
   orders,
@@ -289,6 +298,8 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
   const [loggingOut, setLoggingOut] = useState(false)
   const [resettingPaper, setResettingPaper] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [positionsPage, setPositionsPage] = useState(1)
+  const [ordersPage, setOrdersPage] = useState(1)
 
   const load = useCallback(async (silent = false) => {
     try {
@@ -355,6 +366,13 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
   }, [query])
 
   const openPositions = positions.filter(item => item.quantity !== 0)
+  const pageSize = 5
+  const positionsTotalPages = Math.max(1, Math.ceil(openPositions.length / pageSize))
+  const ordersTotalPages = Math.max(1, Math.ceil(orders.length / pageSize))
+  const currentPositionsPage = Math.min(positionsPage, positionsTotalPages)
+  const currentOrdersPage = Math.min(ordersPage, ordersTotalPages)
+  const visiblePositions = openPositions.slice((currentPositionsPage - 1) * pageSize, currentPositionsPage * pageSize)
+  const visibleOrders = orders.slice((currentOrdersPage - 1) * pageSize, currentOrdersPage * pageSize)
   const totalPnl = positions.reduce((sum, item) => sum + item.total_pnl, 0)
   const exposure = openPositions.reduce((sum, item) => sum + Math.abs(item.market_value), 0)
   const parsedQuantity = Number(quantity)
@@ -369,6 +387,11 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
     setError('')
     setNotice('')
   }, [broker.broker, selected?.symbol])
+
+  useEffect(() => {
+    setPositionsPage(1)
+    setOrdersPage(1)
+  }, [broker.broker])
 
   async function trade(side: Side) {
     if (!selected) return
@@ -392,6 +415,8 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
           setError('')
           setNotice(`${side} ${parsedQuantity} ${selected.symbol} filled at ${money.format(order.average_price || 0)}`)
           setQuantity('1')
+          setPositionsPage(1)
+          setOrdersPage(1)
         }
       }
       // The order has already succeeded. A delayed dashboard refresh must not
@@ -496,15 +521,15 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
         <article className="card positions-card">
           <div className="card-heading"><div><span className="kicker">PORTFOLIO</span><h2>Open positions</h2></div><span className="count">{openPositions.length}</span></div>
           {openPositions.length === 0 ? <EmptyState text="Your filled orders will appear here."/> : <div className="table-wrap"><table><thead><tr><th>Instrument</th><th>Qty</th><th>Avg.</th><th>LTP</th><th>P&L</th></tr></thead><tbody>
-            {openPositions.map(position => <tr key={position.symbol}><td><strong>{position.symbol}</strong><small>NSE · EQ</small></td><td>{position.quantity}</td><td>{money.format(position.average_price)}</td><td>{money.format(position.last_price)}</td><td className={position.total_pnl >= 0 ? 'gain' : 'loss'}>{position.total_pnl >= 0 ? '+' : ''}{money.format(position.total_pnl)}</td></tr>)}
-          </tbody></table></div>}
+            {visiblePositions.map(position => <tr key={position.symbol}><td><strong>{position.symbol}</strong><small>NSE · EQ</small></td><td>{position.quantity}</td><td>{money.format(position.average_price)}</td><td>{money.format(position.last_price)}</td><td className={position.total_pnl >= 0 ? 'gain' : 'loss'}>{position.total_pnl >= 0 ? '+' : ''}{money.format(position.total_pnl)}</td></tr>)}
+          </tbody></table><Pagination page={currentPositionsPage} totalPages={positionsTotalPages} onChange={setPositionsPage}/></div>}
         </article>
       </section>
 
       <section className="card orders-card">
         <div className="card-heading"><div><span className="kicker">EXECUTION LOG</span><h2>Recent orders</h2></div><small>Latest 100 orders</small></div>
         {orders.length === 0 ? <EmptyState text="No orders submitted yet."/> : <div className="table-wrap"><table><thead><tr><th>Time</th><th>Instrument</th><th>Side</th><th>Filled / Qty</th><th>Source</th><th>Fill price</th><th>Status</th></tr></thead><tbody>
-          {orders.map(order => <tr key={order.id}>
+          {visibleOrders.map(order => <tr key={order.id}>
             <td>{formatIstTime(apiDate(order.created_at))}</td>
             <td><strong>{order.symbol}</strong>{(order.broker_order_id || order.rejection_reason) && <small>{order.broker_order_id || order.rejection_reason}</small>}</td>
             <td><span className={`side ${order.side.toLowerCase()}`}>{order.side}</span></td>
@@ -513,7 +538,7 @@ function Dashboard({ email, onLogout }: { email: string; onLogout: () => void })
             <td>{order.average_price !== null ? money.format(order.average_price) : '—'}</td>
             <td><span className={`status ${order.status.toLowerCase()}`}>{order.status}</span></td>
           </tr>)}
-        </tbody></table></div>}
+        </tbody></table><Pagination page={currentOrdersPage} totalPages={ordersTotalPages} onChange={setOrdersPage}/></div>}
       </section>
       </> : activeView === 'portfolio' ? <PortfolioView positions={positions} orders={orders} instruments={instruments} onResetPaper={resetPaperPortfolio} resettingPaper={resettingPaper} canResetPaper={broker.broker === 'PAPER'} onTrade={symbol => {
         setSelected(instruments.find(item => item.symbol === symbol) || null)
