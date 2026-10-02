@@ -235,7 +235,7 @@ export default function ScannerView() {
         <button className={mode === 'preset' ? 'active' : ''} onClick={() => { setMode('preset'); setResult(null) }}>Preset scanners</button>
         <button className={mode === 'custom' ? 'active' : ''} onClick={() => { setMode('custom'); setResult(null) }}>Custom conditions</button>
       </div>
-      <span><ScanSearch size={15}/> NSE equities · Daily candles</span>
+      <span><ScanSearch size={15}/> NIFTY 50 · Daily candles</span>
     </section>
 
     {mode === 'preset' ? <section className="scanner-presets">
@@ -306,7 +306,7 @@ export default function ScannerView() {
         <div><span>Skipped</span><strong>{result.skipped_count}</strong></div>
       </section>
       <section className="card scanner-results">
-        <div className="card-heading"><div><span className="kicker">SCAN RESULTS</span><h2>Matching NSE equities</h2></div><small>Page {result.page} of {result.total_pages}</small></div>
+        <div className="card-heading"><div><span className="kicker">SCAN RESULTS</span><h2>Matching NIFTY 50 stocks</h2></div><small>Page {result.page} of {result.total_pages}</small></div>
         {result.items.length === 0 ? <div className="scanner-empty"><ScanSearch size={28}/><strong>No stocks matched</strong><span>Adjust the conditions and run the scanner again.</span></div> : <div className="table-wrap"><table><thead><tr><th>Rank</th><th>Stock</th><th>Price</th><th>Volume</th><th>Vol. ratio</th><th>SMA 20</th><th>SMA 50</th><th>SMA 200</th><th>RSI 14</th><th>Rank value</th><th>As of</th></tr></thead><tbody>
           {result.items.map(item => <tr key={item.instrument_key}>
             <td><span className="scan-rank">#{item.rank}</span></td>

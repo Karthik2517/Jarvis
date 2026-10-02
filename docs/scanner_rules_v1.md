@@ -18,7 +18,10 @@ a later version.
 
 ## 2. Market and instrument universe
 
-The v1 universe contains active NSE cash-market ordinary equity shares.
+The initial v1 universe contains the 50 current NIFTY 50 constituents that are
+active NSE cash-market ordinary equity shares. The universe boundary remains
+separate from the scanner engine so it can later expand to NIFTY 100, NIFTY 200,
+NIFTY 500, or all eligible NSE equities.
 
 The universe excludes:
 

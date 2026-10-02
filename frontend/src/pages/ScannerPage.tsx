@@ -7,7 +7,7 @@ export default function ScannerPage() {
       <PageHeader
         kicker="MARKET DISCOVERY"
         title="Equity scanner"
-        subtitle="Find NSE equities that match technical conditions."
+        subtitle="Scan NIFTY 50 stocks for technical conditions."
       />
       <ScannerView />
     </>

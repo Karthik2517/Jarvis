@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from .brokers import BrokerFactory
-from .config import get_settings
+from .config import get_settings, resolve_upstox_market_data_token
 from .database import db
 from .dependencies import get_current_user, get_strategy_user
 from .instruments import find_instrument, register_instruments
@@ -321,7 +321,7 @@ async def position_payloads(
         for row in rows if row["instrument_key"]
     ])
     # Market data can be live while execution remains safely in paper mode.
-    if refresh_prices and get_settings().upstox_access_token:
+    if refresh_prices and resolve_upstox_market_data_token(get_settings()):
         await refresh_instrument_prices([row["symbol"] for row in rows if row["quantity"] != 0])
     positions = []
     for row in rows:
@@ -378,7 +378,8 @@ async def dashboard_snapshot(user=Depends(get_current_user)):
             (user["id"],),
         ).fetchall()
 
-    broker["market_data_source"] = "UPSTOX" if get_settings().upstox_access_token else "PAPER"
+    market_data_token = resolve_upstox_market_data_token(get_settings())
+    broker["market_data_source"] = "UPSTOX" if market_data_token else "PAPER"
     positions = await position_payloads(
         user["id"], execution_mode, include_closed=True, refresh_prices=False,
     )
@@ -388,7 +389,7 @@ async def dashboard_snapshot(user=Depends(get_current_user)):
         "orders": [dict(row) for row in orders],
         "strategies": [dict(row) for row in strategies],
         "broker": broker,
-        "prices_pending": bool(get_settings().upstox_access_token and positions),
+        "prices_pending": bool(market_data_token and positions),
     }
 
 
@@ -418,7 +419,9 @@ def broker_status(user=Depends(get_current_user)):
             "SELECT broker, status, updated_at FROM broker_connections WHERE user_id = ?", (user["id"],)
         ).fetchone()
     result = dict(row) if row else {"broker": "PAPER", "status": "CONNECTED"}
-    result["market_data_source"] = "UPSTOX" if get_settings().upstox_access_token else "PAPER"
+    result["market_data_source"] = (
+        "UPSTOX" if resolve_upstox_market_data_token(get_settings()) else "PAPER"
+    )
     return result
 
 
@@ -459,6 +462,8 @@ def connect_broker(payload: BrokerRequest, user=Depends(get_current_user)):
     return {
         "broker": broker,
         "status": connection_status,
-        "market_data_source": "UPSTOX" if settings.upstox_access_token else "PAPER",
+        "market_data_source": (
+            "UPSTOX" if resolve_upstox_market_data_token(settings) else "PAPER"
+        ),
         "message": message,
     }

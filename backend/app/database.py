@@ -297,6 +297,12 @@ class PostgresConnection:
         cursor.execute(query.replace("?", "%s"), parameters)
         return PostgresCursor(cursor, self)
 
+    def executemany(self, query: str, parameters):
+        # Keep the sqlite-compatible connection surface for bulk operations.
+        cursor = self._connection.cursor()
+        cursor.executemany(query.replace("?", "%s"), parameters)
+        return PostgresCursor(cursor, self)
+
     def commit(self):
         self._connection.commit()
 

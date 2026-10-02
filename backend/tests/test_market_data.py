@@ -1,9 +1,22 @@
 import asyncio
+from types import SimpleNamespace
 
 import httpx
 
+from app.config import resolve_upstox_market_data_token
 from app.instruments import find_instrument
 from app.services.market_data import UpstoxMarketData
+
+
+def test_market_data_token_prefers_analytics_token_with_oauth_fallback():
+    assert resolve_upstox_market_data_token(SimpleNamespace(
+        upstox_market_data_token="analytics-token",
+        upstox_access_token="daily-token",
+    )) == "analytics-token"
+    assert resolve_upstox_market_data_token(SimpleNamespace(
+        upstox_market_data_token="",
+        upstox_access_token="daily-token",
+    )) == "daily-token"
 
 
 def test_upstox_search_combines_instruments_and_ltp():
@@ -43,4 +56,3 @@ def test_upstox_search_combines_instruments_and_ltp():
     assert results[0]["source"] == "UPSTOX"
     assert results[0]["change_percent"] == 0.52
     assert find_instrument("RELIANCE")["price"] == 3010.5
-

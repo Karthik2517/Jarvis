@@ -66,7 +66,7 @@ def test_scanner_run_returns_ranked_paginated_api_response(monkeypatch):
             for index in range(253)
         ]
 
-    monkeypatch.setattr(scanner_api.NSEEquityUniverse, "load", load_universe)
+    monkeypatch.setattr(scanner_api.Nifty50Universe, "load", load_universe)
     monkeypatch.setattr(
         scanner_api.UpstoxHistoricalDataProvider,
         "get_daily_candles",
@@ -124,6 +124,31 @@ def test_scanner_run_rejects_ambiguous_selection():
             ]},
         )
     assert response.status_code == 422
+
+
+def test_scanner_run_reports_empty_provider_universe(monkeypatch):
+    async def load_empty_universe(_self, _provider):
+        return []
+
+    monkeypatch.setattr(scanner_api.Nifty50Universe, "load", load_empty_universe)
+    monkeypatch.setattr(
+        scanner_api,
+        "get_settings",
+        lambda: SimpleNamespace(
+            upstox_access_token="test-token",
+            upstox_api_base_url="https://api.upstox.test",
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/scanners/run",
+            headers=auth_headers(client),
+            json={"preset_key": "volume_breakout"},
+        )
+
+    assert response.status_code == 502
+    assert "no eligible NIFTY 50 equities" in response.json()["detail"]
 
 
 def test_saved_scanner_and_in_app_alert_lifecycle(monkeypatch):

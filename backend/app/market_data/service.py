@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 
 from .base import HistoricalDataProvider, MarketDataProviderError
-from .cache import CandleCache
+from .cache import CandleCache, DatabaseCandleCache
 from .models import Candle
 
 
@@ -36,16 +37,39 @@ class HistoricalDataService:
         if from_date > to_date:
             raise ValueError("from_date must not be after to_date")
 
-        cached = self.cache.get(instrument_key, from_date, to_date)
+        # SQLite/psycopg are synchronous. Run cache I/O in worker threads so a
+        # NIFTY 50 scan can actually fetch several instruments concurrently and
+        # does not freeze unrelated FastAPI requests while Neon responds.
+        cached = await self._cache_get(instrument_key, from_date, to_date)
         ranges = self._refresh_ranges(cached, from_date, to_date, refresh=refresh)
         for range_start, range_end in ranges:
             fetched = await self.provider.get_daily_candles(
                 instrument_key, range_start, range_end
             )
             self._validate_provider_candles(fetched, range_start, range_end)
-            self.cache.upsert(instrument_key, fetched, provider=self.provider_name)
+            await self._cache_upsert(instrument_key, fetched)
 
+        return await self._cache_get(instrument_key, from_date, to_date)
+
+    async def _cache_get(
+        self, instrument_key: str, from_date: date, to_date: date
+    ) -> list[Candle]:
+        if isinstance(self.cache, DatabaseCandleCache):
+            return await asyncio.to_thread(
+                self.cache.get, instrument_key, from_date, to_date
+            )
         return self.cache.get(instrument_key, from_date, to_date)
+
+    async def _cache_upsert(self, instrument_key: str, candles: list[Candle]) -> None:
+        if isinstance(self.cache, DatabaseCandleCache):
+            await asyncio.to_thread(
+                self.cache.upsert,
+                instrument_key,
+                candles,
+                provider=self.provider_name,
+            )
+            return
+        self.cache.upsert(instrument_key, candles, provider=self.provider_name)
 
     @staticmethod
     def _refresh_ranges(

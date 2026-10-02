@@ -54,6 +54,35 @@ def _extract_instrument_keys(payload: Any) -> set[str]:
     }
 
 
+def _extract_suspended_nse_equity_keys(payload: Any) -> set[str]:
+    """Return only suspended NSE instruments from the ordinary EQ series.
+
+    Upstox's suspended file contains records from several NSE series (BE, BL,
+    RL, and others). Those records can share an ISIN-based instrument key with
+    an active EQ-series security. Treating every key in that file as a suspended
+    ordinary equity therefore removes valid stocks from the scanner universe.
+    """
+
+    if isinstance(payload, list):
+        records = payload
+    elif isinstance(payload, dict):
+        records = payload.get("data", payload.get("instruments", []))
+    else:
+        records = []
+    if not isinstance(records, list):
+        return set()
+    return {
+        str(record["instrument_key"])
+        for record in records
+        if (
+            isinstance(record, dict)
+            and record.get("instrument_key")
+            and str(record.get("segment") or "").upper() == "NSE_EQ"
+            and str(record.get("instrument_type") or "").upper() == "EQ"
+        )
+    }
+
+
 class UpstoxInstrumentMasterProvider(InstrumentMasterProvider):
     """Download Upstox's daily NSE and suspended-instrument master files."""
 
@@ -88,7 +117,9 @@ class UpstoxInstrumentMasterProvider(InstrumentMasterProvider):
         return [record for record in payload if isinstance(record, dict)]
 
     async def get_suspended_instrument_keys(self) -> set[str]:
-        return _extract_instrument_keys(await self._get_json(self.suspended_url))
+        return _extract_suspended_nse_equity_keys(
+            await self._get_json(self.suspended_url)
+        )
 
 
 class UpstoxHistoricalDataProvider(HistoricalDataProvider):
@@ -118,7 +149,7 @@ class UpstoxHistoricalDataProvider(HistoricalDataProvider):
         to_date: date,
     ) -> list[Candle]:
         if not self.access_token:
-            raise MarketDataProviderError("UPSTOX_ACCESS_TOKEN is not configured")
+            raise MarketDataProviderError("Upstox market-data token is not configured")
         if not instrument_key.strip():
             raise ValueError("instrument_key is required")
         if from_date > to_date:

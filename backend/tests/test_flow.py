@@ -6,6 +6,7 @@ os.environ["DATABASE_URL"] = ""
 os.environ["APP_SECRET"] = "test-secret"
 os.environ["DEMO_STRATEGY_KEY"] = "demo-strategy-key"
 os.environ["UPSTOX_ACCESS_TOKEN"] = ""
+os.environ["UPSTOX_MARKET_DATA_TOKEN"] = ""
 
 from fastapi.testclient import TestClient
 

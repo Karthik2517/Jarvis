@@ -8,10 +8,12 @@ Both the React order ticket and external Python strategies enter through the bac
 
 ## Equity scanner
 
-The Scanner tab provides five NSE daily-candle scans: 52-week high breakout,
-52-week low, volume breakout, price above SMA 20/50/200, and RSI momentum. Users
-can also combine validated custom conditions, rank and paginate results, save
-scanner setups, and create in-app alerts with a minimum-match threshold.
+The Scanner tab evaluates the NIFTY 50 universe with five daily-candle scans:
+52-week high breakout, 52-week low, volume breakout, price above SMA 20/50/200,
+and RSI momentum. Users can also combine validated custom conditions, rank and
+paginate results, save scanner setups, and create in-app alerts with a
+minimum-match threshold. The universe boundary is modular so broader NSE index
+groups can be added later without changing the scanner engine.
 
 Scanner alerts are evaluated with **Check now** and remain research-only. The
 scanner does not generate strategy signals or place orders. Scheduled checks and
@@ -75,15 +77,22 @@ python -m scripts.migrate_sqlite_to_postgres --source ./jarvis.db
 
 The migration creates the PostgreSQL schema and copies users, broker connections, orders, positions, and strategies. When `DATABASE_URL` is empty, the API continues using `DATABASE_PATH` and SQLite for local development.
 
-### Enable live Upstox instrument search
+### Enable live Upstox market data
 
-Generate an access token from your Upstox developer app and add it to `backend/.env`:
+Generate a one-year read-only Analytics Token from your Upstox developer app for
+stock search, quotes, and scanners. Keep the daily OAuth token separate for live
+account and order operations:
 
 ```env
-UPSTOX_ACCESS_TOKEN=your_access_token
+UPSTOX_MARKET_DATA_TOKEN=your_analytics_token
+UPSTOX_ACCESS_TOKEN=your_daily_trading_token
 ```
 
-The FastAPI backend calls Upstox Instrument Search with `NSE` + `EQ` filters and enriches the matches through the V3 LTP API. The token is never sent to the React application. Without a token—or if Upstox is temporarily unavailable—the search automatically uses the seeded paper instrument list.
+The FastAPI backend uses `UPSTOX_MARKET_DATA_TOKEN` for Instrument Search, V3
+LTP quotes, position price refreshes, and historical scanner candles. It never
+uses this read-only token for order placement. If it is empty, the backend falls
+back to `UPSTOX_ACCESS_TOKEN` for backward compatibility. Without either token—or
+if Upstox is temporarily unavailable—the search uses the seeded paper list.
 
 Verify the token without displaying it or your personal profile details:
 

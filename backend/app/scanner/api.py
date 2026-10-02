@@ -7,9 +7,10 @@ from dataclasses import asdict
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..config import get_settings
+from ..config import get_settings, resolve_upstox_market_data_token
 from ..database import db
 from ..dependencies import get_current_user
 from ..market_data import (
@@ -29,7 +30,7 @@ from .conditions import Condition, ConditionField, ConditionOperand, ConditionVa
 from .results import PaginationError, ScanPage, rank_and_paginate
 from .scanner_engine import ScannerEngine
 from .scanners import ScannerDefinition, default_scanners
-from .universe import NSEEquityUniverse
+from .universe import Nifty50Universe
 
 router = APIRouter(prefix="/api/scanners", tags=["scanners"])
 IST = ZoneInfo("Asia/Kolkata")
@@ -140,73 +141,86 @@ def _event_payload(row) -> dict:
 async def _execute_scan(payload: ScannerRunRequest) -> tuple[ScanPage, str]:
     """Evaluate one validated scan without crossing into signal or execution code."""
     settings = get_settings()
-    if not settings.upstox_access_token:
+    market_data_token = resolve_upstox_market_data_token(settings)
+    if not market_data_token:
         raise HTTPException(
             status_code=503,
-            detail="UPSTOX_ACCESS_TOKEN is required to run NSE scanners",
+            detail=(
+                "UPSTOX_MARKET_DATA_TOKEN or UPSTOX_ACCESS_TOKEN is required "
+                "to run NIFTY 50 scanners"
+            ),
         )
 
-    universe = await NSEEquityUniverse().load(UpstoxInstrumentMasterProvider())
-    if payload.symbols:
-        requested = {symbol.strip().upper() for symbol in payload.symbols if symbol.strip()}
-        universe = [item for item in universe if item.trading_symbol in requested]
+    # Reuse one connection pool for both instrument files and all 50 history
+    # requests. Creating a new TLS client per stock made local preset scans take
+    # minutes and could exhaust a serverless invocation window.
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        universe = await Nifty50Universe().load(UpstoxInstrumentMasterProvider(client))
         if not universe:
-            raise HTTPException(status_code=404, detail="None of the requested NSE symbols were found")
+            raise MarketDataProviderError(
+                "Upstox returned no eligible NIFTY 50 equities; the scanner universe could not be loaded"
+            )
+        if payload.symbols:
+            requested = {symbol.strip().upper() for symbol in payload.symbols if symbol.strip()}
+            universe = [item for item in universe if item.trading_symbol in requested]
+            if not universe:
+                raise HTTPException(status_code=404, detail="None of the requested NSE symbols were found")
 
-    history = HistoricalDataService(
-        UpstoxHistoricalDataProvider(
-            settings.upstox_access_token,
-            settings.upstox_api_base_url,
-        ),
-        DatabaseCandleCache(db),
-        provider_name="UPSTOX",
-    )
-    engine = ScannerEngine(history)
-    to_date = _completed_through()
-    from_date = to_date - timedelta(days=430)
+        history = HistoricalDataService(
+            UpstoxHistoricalDataProvider(
+                market_data_token,
+                settings.upstox_api_base_url,
+                client,
+            ),
+            DatabaseCandleCache(db),
+            provider_name="UPSTOX",
+        )
+        engine = ScannerEngine(history)
+        to_date = _completed_through()
+        from_date = to_date - timedelta(days=430)
 
-    if payload.preset_key:
-        scanner = default_scanners().get(payload.preset_key)
-        if not scanner:
-            raise HTTPException(status_code=404, detail="Scanner preset not found")
-        page = await engine.scan_definition(
+        if payload.preset_key:
+            scanner = default_scanners().get(payload.preset_key)
+            if not scanner:
+                raise HTTPException(status_code=404, detail="Scanner preset not found")
+            page = await engine.scan_definition(
+                universe,
+                scanner,
+                from_date=from_date,
+                to_date=to_date,
+                refresh=payload.refresh,
+                page=payload.page,
+                page_size=payload.page_size,
+            )
+            return page, scanner.key
+
+        conditions = [
+            Condition(
+                left=item.left,
+                operator=item.operator,
+                right=(
+                    ConditionOperand.indicator(item.right.field, item.right.multiplier)
+                    if item.right.field is not None
+                    else ConditionOperand.literal(item.right.value)
+                ),
+            )
+            for item in payload.conditions
+        ]
+        result = await engine.scan(
             universe,
-            scanner,
+            conditions,
             from_date=from_date,
             to_date=to_date,
             refresh=payload.refresh,
+        )
+        page = rank_and_paginate(
+            result,
+            rank_field=payload.rank_field,
+            rank_direction=payload.rank_direction,
             page=payload.page,
             page_size=payload.page_size,
         )
-        return page, scanner.key
-
-    conditions = [
-        Condition(
-            left=item.left,
-            operator=item.operator,
-            right=(
-                ConditionOperand.indicator(item.right.field, item.right.multiplier)
-                if item.right.field is not None
-                else ConditionOperand.literal(item.right.value)
-            ),
-        )
-        for item in payload.conditions
-    ]
-    result = await engine.scan(
-        universe,
-        conditions,
-        from_date=from_date,
-        to_date=to_date,
-        refresh=payload.refresh,
-    )
-    page = rank_and_paginate(
-        result,
-        rank_field=payload.rank_field,
-        rank_direction=payload.rank_direction,
-        page=payload.page,
-        page_size=payload.page_size,
-    )
-    return page, "custom"
+        return page, "custom"
 
 
 @router.get("")

@@ -98,33 +98,36 @@ class DatabaseCandleCache(CandleCache):
         rows = list(candles)
         if not rows:
             return
+        values = [
+            (
+                instrument_key,
+                candle.timestamp.date().isoformat(),
+                candle.timestamp.isoformat(),
+                candle.open,
+                candle.high,
+                candle.low,
+                candle.close,
+                candle.volume,
+                candle.open_interest,
+                provider,
+            )
+            for candle in rows
+        ]
         with self.database.transaction() as connection:
-            for candle in rows:
-                connection.execute(
-                    """INSERT INTO market_candles
-                       (instrument_key, candle_date, candle_timestamp, open, high, low,
-                        close, volume, open_interest, provider)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(instrument_key, candle_date) DO UPDATE SET
-                         candle_timestamp = excluded.candle_timestamp,
-                         open = excluded.open,
-                         high = excluded.high,
-                         low = excluded.low,
-                         close = excluded.close,
-                         volume = excluded.volume,
-                         open_interest = excluded.open_interest,
-                         provider = excluded.provider,
-                         updated_at = CURRENT_TIMESTAMP""",
-                    (
-                        instrument_key,
-                        candle.timestamp.date().isoformat(),
-                        candle.timestamp.isoformat(),
-                        candle.open,
-                        candle.high,
-                        candle.low,
-                        candle.close,
-                        candle.volume,
-                        candle.open_interest,
-                        provider,
-                    ),
-                )
+            connection.executemany(
+                """INSERT INTO market_candles
+                   (instrument_key, candle_date, candle_timestamp, open, high, low,
+                    close, volume, open_interest, provider)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(instrument_key, candle_date) DO UPDATE SET
+                     candle_timestamp = excluded.candle_timestamp,
+                     open = excluded.open,
+                     high = excluded.high,
+                     low = excluded.low,
+                     close = excluded.close,
+                     volume = excluded.volume,
+                     open_interest = excluded.open_interest,
+                     provider = excluded.provider,
+                     updated_at = CURRENT_TIMESTAMP""",
+                values,
+            )

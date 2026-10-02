@@ -11,7 +11,7 @@ from app.market_data import (
     UpstoxHistoricalDataProvider,
     UpstoxInstrumentMasterProvider,
 )
-from app.scanner.universe import NSEEquityUniverse
+from app.scanner.universe import NIFTY_50_SYMBOLS, NSEEquityUniverse, Nifty50Universe
 
 
 def equity_record(symbol: str, key: str, **overrides):
@@ -50,7 +50,21 @@ def test_nse_equity_universe_filters_and_sorts_provider_records():
 
 def test_upstox_instrument_provider_reads_gzip_and_suspended_files():
     nse_payload = [equity_record("RELIANCE", "NSE_EQ|INE002A01018")]
-    suspended_payload = {"data": [{"instrument_key": "NSE_EQ|INESUSPENDED1"}]}
+    suspended_payload = {"data": [
+        equity_record("SUSPENDED", "NSE_EQ|INESUSPENDED1"),
+        equity_record(
+            "RELIANCE",
+            "NSE_EQ|INE002A01018",
+            instrument_type="BE",
+            security_type=None,
+        ),
+        equity_record(
+            "BSEONLY",
+            "BSE_EQ|INE000000001",
+            exchange="BSE",
+            segment="BSE_EQ",
+        ),
+    ]}
 
     def handler(request: httpx.Request) -> httpx.Response:
         payload = suspended_payload if "suspended" in request.url.path else nse_payload
@@ -67,6 +81,31 @@ def test_upstox_instrument_provider_reads_gzip_and_suspended_files():
     instruments, suspended = asyncio.run(run())
     assert instruments == nse_payload
     assert suspended == {"NSE_EQ|INESUSPENDED1"}
+
+
+def test_suspended_alternate_series_does_not_remove_active_equity():
+    reliance = equity_record("RELIANCE", "NSE_EQ|INE002A01018")
+    universe = NSEEquityUniverse().build(
+        [reliance],
+        # The provider must not return this key merely because an alternate
+        # series with the same ISIN appears in Upstox's suspended file.
+        set(),
+    )
+
+    assert [item.trading_symbol for item in universe] == ["RELIANCE"]
+
+
+def test_nifty_50_universe_keeps_only_index_constituents():
+    records = [
+        equity_record("RELIANCE", "NSE_EQ|INE002A01018"),
+        equity_record("TCS", "NSE_EQ|INE467B01029"),
+        equity_record("NOTNIFTY", "NSE_EQ|INE000000099"),
+    ]
+
+    universe = Nifty50Universe().build(records)
+
+    assert len(NIFTY_50_SYMBOLS) == 50
+    assert [item.trading_symbol for item in universe] == ["RELIANCE", "TCS"]
 
 
 def test_upstox_daily_history_encodes_key_and_orders_candles():
@@ -104,7 +143,7 @@ def test_upstox_daily_history_encodes_key_and_orders_candles():
 
 def test_upstox_daily_history_validates_requests_and_payloads():
     provider = UpstoxHistoricalDataProvider("")
-    with pytest.raises(MarketDataProviderError, match="UPSTOX_ACCESS_TOKEN"):
+    with pytest.raises(MarketDataProviderError, match="market-data token"):
         asyncio.run(
             provider.get_daily_candles(
                 "NSE_EQ|INE002A01018", date(2026, 9, 1), date(2026, 9, 30)

@@ -2,7 +2,7 @@ import logging
 
 import httpx
 
-from ..config import get_settings
+from ..config import get_settings, resolve_upstox_market_data_token
 from ..instruments import register_instruments, search_local_instruments
 
 logger = logging.getLogger(__name__)
@@ -125,11 +125,12 @@ class UpstoxMarketData:
 
 async def search_equities(query: str, limit: int = 10) -> list[dict]:
     settings = get_settings()
-    if not query.strip() or not settings.upstox_access_token:
+    market_data_token = resolve_upstox_market_data_token(settings)
+    if not query.strip() or not market_data_token:
         return search_local_instruments(query, limit)
     try:
         return await UpstoxMarketData(
-            settings.upstox_access_token, settings.upstox_api_base_url
+            market_data_token, settings.upstox_api_base_url
         ).search_equities(query, limit)
     except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
         logger.warning("Upstox instrument search failed; using paper fallback: %s", exc)
@@ -138,11 +139,12 @@ async def search_equities(query: str, limit: int = 10) -> list[dict]:
 
 async def refresh_instrument_prices(symbols: list[str]) -> None:
     settings = get_settings()
-    if not settings.upstox_access_token or not symbols:
+    market_data_token = resolve_upstox_market_data_token(settings)
+    if not market_data_token or not symbols:
         return
     try:
         await UpstoxMarketData(
-            settings.upstox_access_token, settings.upstox_api_base_url
+            market_data_token, settings.upstox_api_base_url
         ).refresh_prices(symbols)
     except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
         logger.warning("Upstox LTP refresh failed; keeping last known prices: %s", exc)
