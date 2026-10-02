@@ -1,6 +1,10 @@
 import type { BrokerStatus, Instrument, Order, Position, Side, Strategy } from './types'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+// Support the original deployment variable name as well as the canonical one.
+// Both values should include the backend's `/api` prefix.
+const API_URL = import.meta.env.VITE_API_URL
+  || import.meta.env.VITE_API_BASE_URL
+  || 'http://localhost:8000/api'
 
 export class ApiError extends Error {}
 
